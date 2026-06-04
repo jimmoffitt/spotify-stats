@@ -287,7 +287,14 @@ def top_tracks(df, n=20):
 
 
 def top_albums(df, n=20):
-    return _agg_counts(df, 'album_name').head(n)
+    """Top albums by play count, keyed by (album, artist) so the artist is known."""
+    out = (df.groupby(['album_name', 'artist_name'])
+             .agg(plays=('ts', 'size'),
+                  minutes=('minutes_played', 'sum'))
+             .reset_index()
+             .sort_values('plays', ascending=False))
+    out['minutes'] = out['minutes'].round(1)
+    return out.head(n)
 
 
 def top_genres(df, n=20):

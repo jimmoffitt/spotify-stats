@@ -203,7 +203,9 @@ def render_tracks(df, value_col, value_label):
 def render_albums(df, value_col, value_label):
     st.subheader("Top albums")
     top = proc.top_albums(df, n=25)
-    st.plotly_chart(charts.ranked_bar(top, 'album_name', value_col,
+    label = top['artist_name'].fillna('Unknown') + " — " + top['album_name'].fillna('Unknown')
+    chart_df = top.assign(label=label)
+    st.plotly_chart(charts.ranked_bar(chart_df, 'label', value_col,
                                       f"Top albums by {value_label.lower()}"),
                     use_container_width=True)
 
