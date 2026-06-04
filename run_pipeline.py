@@ -19,7 +19,9 @@ def main():
     plays = fetch_data.load_gdpr_export()
 
     # 2. Enrich: track metadata (duration/release/album), then artist genres.
-    access_token = fetch_data.get_access_token()
+    #    Catalog endpoints (/tracks, /artists) need no user scope, so use the
+    #    app-only Client Credentials token — no interactive OAuth required.
+    access_token = fetch_data.get_client_credentials_token()
     track_cache = enrich_data.enrich_tracks(plays, access_token)
     artist_cache = enrich_data.enrich_artists(track_cache, access_token)
 

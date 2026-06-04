@@ -85,6 +85,24 @@ def get_access_token(token_file=config.TOKEN_FILE,
     return tokens['access_token']
 
 
+def get_client_credentials_token(client_id=config.CLIENT_ID, client_secret=config.CLIENT_SECRET):
+    """
+    Return an app-only access token via the Client Credentials flow. This token
+    works for catalog endpoints that need no user scope — /tracks and /artists,
+    used by the enrichment layer — and avoids the interactive OAuth setup.
+    It does NOT work for /me/* endpoints (e.g. recently-played); those still
+    require the user-authorized token from get_access_token().
+    """
+    response = requests.post(
+        config.TOKEN_URL,
+        headers=_basic_auth_header(client_id, client_secret),
+        data={'grant_type': 'client_credentials'},
+    )
+    if response.status_code != 200:
+        raise ConnectionError(f"Error getting client-credentials token: {response.text}")
+    return response.json()['access_token']
+
+
 # --- Live API: incremental sync ---
 
 def fetch_recently_played(access_token, after_ts=None, limit=config.RECENTLY_PLAYED_LIMIT):

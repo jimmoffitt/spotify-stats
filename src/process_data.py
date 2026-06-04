@@ -218,13 +218,20 @@ def build_plays_df(plays, track_cache, artist_cache, settings=None):
 
 
 def _release_year(release_date):
-    """Spotify release_date may be 'YYYY', 'YYYY-MM', or 'YYYY-MM-DD'."""
+    """
+    Parse a Spotify release_date ('YYYY', 'YYYY-MM', or 'YYYY-MM-DD') to a year.
+    Implausible years are treated as missing — Spotify uses placeholders like
+    '0000' and '1900' for unknown dates, which otherwise pollute the decade view.
+    """
     if not release_date:
         return pd.NA
     try:
-        return int(str(release_date)[:4])
+        year = int(str(release_date)[:4])
     except ValueError:
         return pd.NA
+    if year < 1920 or year > datetime.now().year + 1:
+        return pd.NA
+    return year
 
 
 def _genres_for_track(track_meta, artist_cache):
