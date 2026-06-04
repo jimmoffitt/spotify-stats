@@ -34,6 +34,7 @@ def metric_columns(metric):
 _COL_ARTIST, _COL_ALL = "Artist", "All years"
 _COL_BEFORE, _COL_AFTER = "Before (YYYY or YYYY-MM)", "After (YYYY or YYYY-MM)"
 _COL_ONLY = "Only (years/months, csv)"
+_COL_KEEP = "Keep % (blank=0)"
 
 
 def _norm_token(s):
@@ -46,21 +47,36 @@ def _norm_token(s):
     return None
 
 
+def _norm_keep(v):
+    """Parse a 'keep' percent (0..100) to a fraction in (0,1); blank/0/100 -> None."""
+    if v is None or (isinstance(v, float) and v != v):  # None or NaN
+        return None
+    try:
+        pct = float(str(v).strip().rstrip('%'))
+    except ValueError:
+        return None
+    if pct <= 0 or pct >= 100:
+        return None
+    return round(pct / 100, 4)
+
+
 def _exclusions_to_df(exclusions):
     """Flatten the artist-centric exclusions schema into an editable table."""
     rows = []
     for artist, rule in exclusions.get('exclude', {}).items():
         if rule is True or rule == 'all':
-            rows.append({_COL_ARTIST: artist, _COL_ALL: True,
-                         _COL_BEFORE: "", _COL_AFTER: "", _COL_ONLY: ""})
+            rows.append({_COL_ARTIST: artist, _COL_ALL: True, _COL_BEFORE: "",
+                         _COL_AFTER: "", _COL_ONLY: "", _COL_KEEP: None})
         elif isinstance(rule, dict):
             only = ",".join(str(y) for y in (rule.get('years') or []))
+            keep = rule.get('keep')
             rows.append({_COL_ARTIST: artist, _COL_ALL: False,
                          _COL_BEFORE: "" if rule.get('before') is None else str(rule['before']),
                          _COL_AFTER: "" if rule.get('after') is None else str(rule['after']),
-                         _COL_ONLY: only})
+                         _COL_ONLY: only,
+                         _COL_KEEP: int(round(keep * 100)) if keep else None})
     return pd.DataFrame(rows, columns=[_COL_ARTIST, _COL_ALL, _COL_BEFORE,
-                                       _COL_AFTER, _COL_ONLY])
+                                       _COL_AFTER, _COL_ONLY, _COL_KEEP])
 
 
 def _df_to_exclusions(edited):
@@ -70,8 +86,9 @@ def _df_to_exclusions(edited):
         name = str(r.get(_COL_ARTIST, "")).strip()
         if not name or name.lower() == "nan":
             continue
+        keep = _norm_keep(r.get(_COL_KEEP))
         if bool(r.get(_COL_ALL)):
-            rules[name] = True
+            rules[name] = {"keep": keep} if keep is not None else True
             continue
         rule = {}
         before = _norm_token(r.get(_COL_BEFORE, ""))
@@ -84,6 +101,8 @@ def _df_to_exclusions(edited):
                             str(r.get(_COL_ONLY, "")).split(",")) if t is not None]
         if only:
             rule['years'] = only
+        if keep is not None:
+            rule['keep'] = keep
         rules[name] = rule or True  # an artist with no constraints -> all years
     return {"exclude": rules}
 
@@ -316,8 +335,10 @@ def render_settings(df):
     st.caption("Drop an artist's plays for shared-account periods. Per row: tick "
                "**All years**, or set a **Before** / **After** bound, or a "
                "comma-separated **Only** list. Bounds take a year (`2019`) or a "
-               "month (`2019-06`). Example — Taylor Swift, *Before* = `2019` drops "
-               "2011–2018 and keeps 2019 onward. Add rows with the ＋ at the bottom.")
+               "month (`2019-06`). **Keep %** claims only a share of that period "
+               "(e.g. `50` for a 50/50 split with a kid); blank = drop all. "
+               "Example — Lorde, *Before* = `2020`, *Keep %* = `50` keeps half of "
+               "pre-2020 plays. Add rows with the ＋ at the bottom.")
     editor_df = _exclusions_to_df(proc.load_exclusions())
     edited = st.data_editor(
         editor_df, num_rows="dynamic", width='stretch', key="excl_editor",
@@ -327,6 +348,8 @@ def render_settings(df):
             _COL_BEFORE: st.column_config.TextColumn(_COL_BEFORE),
             _COL_AFTER: st.column_config.TextColumn(_COL_AFTER),
             _COL_ONLY: st.column_config.TextColumn(_COL_ONLY),
+            _COL_KEEP: st.column_config.NumberColumn(
+                _COL_KEEP, min_value=0, max_value=100, step=5, format="%d"),
         })
     if st.button("Save exclusions"):
         proc.save_exclusions(_df_to_exclusions(edited))

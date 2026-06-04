@@ -50,7 +50,10 @@ def load_exclusions(path=config.EXCLUSIONS_FILE):
         }
 
     Bounds accept a year ("2019") or a year-month ("2019-06") for monthly
-    resolution. Missing file -> {}. before/after/years are OR'd (union semantics).
+    resolution. An optional "keep" fraction (0..1) claims only a share of the
+    period's plays — e.g. {"before": 2020, "keep": 0.5} keeps half of the
+    pre-2020 plays (a shared-account split). Missing file -> {}. before/after/
+    years are OR'd (union semantics).
     """
     if os.path.exists(path):
         with open(path, 'r', encoding='utf-8') as f:
@@ -98,12 +101,22 @@ def _entry_match(entry, year, month_idx):
         return None
 
 
+# Seed for reproducible partial-share sampling, so a "keep 50%" split drops the
+# same rows on every run (stable play counts).
+_EXCLUSION_SEED = 42
+
+
 def apply_exclusions(df, exclusions):
     """
     Drop plays matching the artist exclusion rules (see load_exclusions for the
     schema). Matching is case-insensitive and resolves to the month. Returns a
-    filtered copy; df is unchanged. A rule of True (or "all") excludes every
-    year; otherwise before / after / years conditions are OR'd for that artist.
+    filtered copy; df is unchanged.
+
+    For each artist the rule defines a *period* (True/"all" = every year;
+    otherwise before / after / years OR'd together) and an optional `keep`
+    fraction in [0, 1] — the share of that period's plays to keep. keep defaults
+    to 0 (drop the whole period, the normal exclusion). keep=0.5 keeps half
+    (a shared-account split); keep>=1 drops nothing.
     """
     if not exclusions or df.empty:
         return df
@@ -114,29 +127,47 @@ def apply_exclusions(df, exclusions):
     artist_lower = df['artist_name'].str.lower()
     year = df['year']
     month_idx = df['year'] * 12 + (df['month'] - 1)
-    mask = pd.Series(False, index=df.index)
+    drop = pd.Series(False, index=df.index)
 
     for artist, rule in rules.items():
         is_artist = artist_lower == str(artist).lower()
-        if rule is True or rule == 'all':
-            mask |= is_artist
+        if not is_artist.any():
             continue
-        if not isinstance(rule, dict):
-            continue
-        cond = pd.Series(False, index=df.index)
-        before = _bound_index(rule.get('before'), end=False) if rule.get('before') is not None else None
-        if before is not None:
-            cond |= month_idx < before
-        after = _bound_index(rule.get('after'), end=True) if rule.get('after') is not None else None
-        if after is not None:
-            cond |= month_idx > after
-        for entry in (rule.get('years') or []):
-            m = _entry_match(entry, year, month_idx)
-            if m is not None:
-                cond |= m
-        mask |= is_artist & cond
 
-    return df[~mask]
+        keep = 0.0
+        if rule is True or rule == 'all':
+            period = is_artist
+        elif isinstance(rule, dict):
+            keep = max(0.0, min(1.0, float(rule.get('keep') or 0.0)))
+            window_keys = any(k in rule for k in ('before', 'after', 'years'))
+            cond = pd.Series(False, index=df.index)
+            before = _bound_index(rule.get('before'), end=False) if rule.get('before') is not None else None
+            if before is not None:
+                cond |= month_idx < before
+            after = _bound_index(rule.get('after'), end=True) if rule.get('after') is not None else None
+            if after is not None:
+                cond |= month_idx > after
+            for entry in (rule.get('years') or []):
+                m = _entry_match(entry, year, month_idx)
+                if m is not None:
+                    cond |= m
+            # No window keys at all => whole-artist period; window keys present
+            # but unparseable => empty period (drop nothing), which is safe.
+            period = is_artist if not window_keys else (is_artist & cond)
+        else:
+            continue
+
+        if keep >= 1:
+            continue  # keep everything in the period
+        if keep <= 0:
+            drop |= period
+        else:
+            period_idx = df.index[period]
+            sampled = pd.Series(period_idx).sample(
+                frac=1.0 - keep, random_state=_EXCLUSION_SEED).values
+            drop |= df.index.isin(sampled)
+
+    return df[~drop]
 
 
 def resolve_timezone(settings):
