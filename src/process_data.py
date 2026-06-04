@@ -1,0 +1,359 @@
+"""
+src/process_data.py — Merge raw plays with enriched metadata into plays.parquet.
+
+build_plays_df() produces the one-row-per-play DataFrame described in DESIGN.md
+"Core DataFrame": it filters podcasts/incomplete records, derives full_listen,
+the time columns (year/month/hour/day_of_week in local time), release_year /
+decade, and the exploded-ready genres list, then save_plays() writes
+data/processed/plays.parquet. The remaining functions are the aggregation
+helpers the Streamlit tabs call.
+"""
+import json
+import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import pandas as pd
+
+from src import config
+
+
+# --- settings ---
+
+def load_settings():
+    """Load data/settings.json, filling any missing keys from DEFAULT_SETTINGS."""
+    settings = dict(config.DEFAULT_SETTINGS)
+    if os.path.exists(config.SETTINGS_FILE):
+        with open(config.SETTINGS_FILE, 'r', encoding='utf-8') as f:
+            settings.update(json.load(f))
+    return settings
+
+
+def save_settings(settings):
+    os.makedirs(os.path.dirname(config.SETTINGS_FILE), exist_ok=True)
+    with open(config.SETTINGS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(settings, f, indent=2)
+
+
+def load_exclusions(path=config.EXCLUSIONS_FILE):
+    """
+    Load artist exclusions. Schema is artist-centric — an "exclude" object maps
+    each artist name to a rule describing which years to drop:
+
+        {
+          "exclude": {
+            "Meghan Trainor": true,            # all years
+            "Taylor Swift":   {"before": 2019},# years < 2019 (keep 2019+)
+            "Some Artist":    {"after": 2020}, # years > 2020
+            "Other Artist":   {"years": [2015, 2016]}
+          }
+        }
+
+    Bounds accept a year ("2019") or a year-month ("2019-06") for monthly
+    resolution. Missing file -> {}. before/after/years are OR'd (union semantics).
+    """
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+
+def save_exclusions(exclusions, path=config.EXCLUSIONS_FILE):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(exclusions, f, indent=2, ensure_ascii=False)
+
+
+def _month_index(year, month):
+    """Map a (year, month) to a single comparable integer (months since year 0)."""
+    return int(year) * 12 + (int(month) - 1)
+
+
+def _bound_index(value, *, end):
+    """
+    Parse a 'YYYY' or 'YYYY-MM' bound into a month index. A year-only value
+    resolves to December of that year for an upper (after) bound and January for
+    a lower (before) bound, so 'before 2019' keeps all of 2019 and 'after 2020'
+    keeps all of 2020. Returns None for unparseable input.
+    """
+    try:
+        s = str(value).strip()
+        if '-' in s:
+            y, m = s.split('-')[:2]
+            return _month_index(int(y), int(m))
+        return _month_index(int(s), 12 if end else 1)
+    except (ValueError, TypeError):
+        return None
+
+
+def _entry_match(entry, year, month_idx):
+    """Boolean Series matching a 'years' entry — a year ('2019') or month ('2019-06')."""
+    try:
+        s = str(entry).strip()
+        if '-' in s:
+            y, m = s.split('-')[:2]
+            return month_idx == _month_index(int(y), int(m))
+        return year == int(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def apply_exclusions(df, exclusions):
+    """
+    Drop plays matching the artist exclusion rules (see load_exclusions for the
+    schema). Matching is case-insensitive and resolves to the month. Returns a
+    filtered copy; df is unchanged. A rule of True (or "all") excludes every
+    year; otherwise before / after / years conditions are OR'd for that artist.
+    """
+    if not exclusions or df.empty:
+        return df
+    rules = exclusions.get('exclude', {})
+    if not rules:
+        return df
+
+    artist_lower = df['artist_name'].str.lower()
+    year = df['year']
+    month_idx = df['year'] * 12 + (df['month'] - 1)
+    mask = pd.Series(False, index=df.index)
+
+    for artist, rule in rules.items():
+        is_artist = artist_lower == str(artist).lower()
+        if rule is True or rule == 'all':
+            mask |= is_artist
+            continue
+        if not isinstance(rule, dict):
+            continue
+        cond = pd.Series(False, index=df.index)
+        before = _bound_index(rule.get('before'), end=False) if rule.get('before') is not None else None
+        if before is not None:
+            cond |= month_idx < before
+        after = _bound_index(rule.get('after'), end=True) if rule.get('after') is not None else None
+        if after is not None:
+            cond |= month_idx > after
+        for entry in (rule.get('years') or []):
+            m = _entry_match(entry, year, month_idx)
+            if m is not None:
+                cond |= m
+        mask |= is_artist & cond
+
+    return df[~mask]
+
+
+def resolve_timezone(settings):
+    """
+    Return a tzinfo for local-time conversion. Uses the IANA name in settings
+    when present; otherwise falls back to the system's current local timezone.
+    """
+    tz_name = settings.get('timezone')
+    if tz_name:
+        return ZoneInfo(tz_name)
+    return datetime.now().astimezone().tzinfo
+
+
+# --- core DataFrame ---
+
+def build_plays_df(plays, track_cache, artist_cache, settings=None):
+    """
+    Build the fully-enriched, one-row-per-play DataFrame.
+
+    plays:        raw GDPR records (from fetch_data.load_gdpr_export)
+    track_cache:  enrich_data track_metadata (keyed by track URI)
+    artist_cache: enrich_data artist_metadata (keyed by artist ID)
+    """
+    settings = settings or load_settings()
+    threshold = settings.get('full_listen_threshold',
+                             config.DEFAULT_SETTINGS['full_listen_threshold'])
+    tz = resolve_timezone(settings)
+
+    # 1. Base frame from raw records, keeping only music tracks with a URI/name.
+    rows = [
+        {
+            'ts': p['ts'],
+            'ms_played': p.get('ms_played', 0),
+            'track_name': p.get('master_metadata_track_name'),
+            'artist_name': p.get('master_metadata_album_artist_name'),
+            'album_name': p.get('master_metadata_album_album_name'),
+            'track_uri': p.get('spotify_track_uri'),
+            'skipped': bool(p.get('skipped', False)),
+        }
+        for p in plays
+        if (p.get('spotify_track_uri') or '').startswith(config.TRACK_URI_PREFIX)
+        and p.get('master_metadata_track_name')
+    ]
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    # 2. Timestamps. ts is UTC (ISO 'Z'); ts_local drives hour/day analysis.
+    df['ts'] = pd.to_datetime(df['ts'], utc=True)
+    df['ts_local'] = df['ts'].dt.tz_convert(tz)
+    df['minutes_played'] = df['ms_played'] / 60000.0
+
+    # 3. Track enrichment: duration, release year, decade, full_listen.
+    df['duration_ms'] = pd.to_numeric(
+        df['track_uri'].map(lambda u: (track_cache.get(u) or {}).get('duration_ms')),
+        errors='coerce')
+    df['full_listen'] = (
+        df['duration_ms'].notna()
+        & (df['ms_played'] > threshold * df['duration_ms'].fillna(0))
+    )
+    df['release_year'] = df['track_uri'].map(
+        lambda u: _release_year((track_cache.get(u) or {}).get('release_date')))
+    df['decade'] = (df['release_year'] // 10 * 10).astype('Int64')
+
+    # 4. Artist enrichment: genres (union across the track's artists).
+    df['genres'] = df['track_uri'].map(
+        lambda u: _genres_for_track(track_cache.get(u), artist_cache))
+
+    # 5. Derived time columns (local).
+    df['year'] = df['ts_local'].dt.year
+    df['month'] = df['ts_local'].dt.month
+    df['hour'] = df['ts_local'].dt.hour
+    df['day_of_week'] = df['ts_local'].dt.dayofweek  # 0=Mon .. 6=Sun
+
+    # 6. Country is Phase 2 (nullable until MusicBrainz enrichment runs).
+    df['country'] = pd.NA
+
+    return df
+
+
+def _release_year(release_date):
+    """Spotify release_date may be 'YYYY', 'YYYY-MM', or 'YYYY-MM-DD'."""
+    if not release_date:
+        return pd.NA
+    try:
+        return int(str(release_date)[:4])
+    except ValueError:
+        return pd.NA
+
+
+def _genres_for_track(track_meta, artist_cache):
+    """Union of genres across all of a track's artists, de-duplicated, ordered."""
+    if not track_meta:
+        return []
+    seen, genres = set(), []
+    for aid in track_meta.get('artist_ids', []):
+        for g in (artist_cache.get(aid) or {}).get('genres', []):
+            if g not in seen:
+                seen.add(g)
+                genres.append(g)
+    return genres
+
+
+# --- parquet I/O ---
+
+def save_plays(df, path=config.PLAYS_FILE):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    df.to_parquet(path, index=False)
+    print(f"✅ Wrote {len(df)} plays to {path}")
+
+
+def load_plays(path=config.PLAYS_FILE):
+    return pd.read_parquet(path)
+
+
+# --- aggregation helpers (used by the dashboard tabs) ---
+
+def _agg_counts(df, group_col):
+    """Plays + total minutes per group, sorted by plays desc."""
+    out = (df.groupby(group_col)
+             .agg(plays=('ts', 'size'),
+                  minutes=('minutes_played', 'sum'))
+             .reset_index()
+             .sort_values('plays', ascending=False))
+    out['minutes'] = out['minutes'].round(1)
+    return out
+
+
+def top_artists(df, n=20):
+    return _agg_counts(df, 'artist_name').head(n)
+
+
+def top_tracks(df, n=20):
+    out = (df.groupby(['track_name', 'artist_name'])
+             .agg(plays=('ts', 'size'),
+                  minutes=('minutes_played', 'sum'))
+             .reset_index()
+             .sort_values('plays', ascending=False))
+    out['minutes'] = out['minutes'].round(1)
+    return out.head(n)
+
+
+def top_albums(df, n=20):
+    return _agg_counts(df, 'album_name').head(n)
+
+
+def top_genres(df, n=20):
+    """Explode the list-valued genres column before aggregating."""
+    exploded = df.explode('genres').dropna(subset=['genres'])
+    return _agg_counts(exploded, 'genres').head(n)
+
+
+def plays_by_year(df):
+    return _agg_counts(df, 'year').sort_values('year')
+
+
+def top_artists_per_year(df, n=10, metric='plays'):
+    """
+    Top-N artists for every year, as a tidy long-format DataFrame with columns
+    [year, rank, artist_name, plays, minutes]. `metric` ('plays' or 'minutes')
+    chooses the ranking dimension; ties are broken alphabetically so the
+    ranking is deterministic.
+    """
+    counts = (df.groupby(['year', 'artist_name'])
+                .agg(plays=('ts', 'size'),
+                     minutes=('minutes_played', 'sum'))
+                .reset_index())
+    counts['minutes'] = counts['minutes'].round(1)
+    counts = counts.sort_values(['year', metric, 'artist_name'],
+                                ascending=[True, False, True])
+    counts['rank'] = counts.groupby('year').cumcount() + 1
+    out = counts[counts['rank'] <= n]
+    return out[['year', 'rank', 'artist_name', 'plays', 'minutes']].reset_index(drop=True)
+
+
+def top_artists_wide(df, n=10, metric='minutes', show_values=False):
+    """
+    Wide 'rank chart' view: rows are ranks 1..n, columns are years, each cell is
+    the artist holding that rank that year (ranked by `metric`). With
+    show_values=True the cell becomes 'Artist (1,234)' using the metric value.
+    """
+    long = top_artists_per_year(df, n=n, metric=metric)
+    if show_values:
+        long = long.copy()
+        long['cell'] = long.apply(
+            lambda r: f"{r['artist_name']} ({r[metric]:,.0f})", axis=1)
+        value_col = 'cell'
+    else:
+        value_col = 'artist_name'
+    wide = long.pivot(index='rank', columns='year', values=value_col)
+    wide.columns = [str(c) for c in wide.columns]
+    return wide
+
+
+def wide_to_markdown(wide, title=None):
+    """Render a wide rank-chart DataFrame as a Markdown table (Rank | year | ...)."""
+    years = [str(c) for c in wide.columns]
+    lines = []
+    if title:
+        lines += [f"# {title}", ""]
+    lines.append("| Rank | " + " | ".join(years) + " |")
+    lines.append("|" + "------|" * (len(years) + 1))
+    for rank in wide.index:
+        cells = ["" if pd.isna(wide.loc[rank, y]) else str(wide.loc[rank, y])
+                 for y in wide.columns]
+        lines.append(f"| {rank} | " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def decade_breakdown(df):
+    """Plays + minutes per release decade (drops plays lacking release data)."""
+    return _agg_counts(df.dropna(subset=['decade']), 'decade').sort_values('decade')
+
+
+def patterns_heatmap(df):
+    """day_of_week (0-6) x hour (0-23) play-count grid for the Patterns tab."""
+    grid = (df.pivot_table(index='day_of_week', columns='hour',
+                           values='ts', aggfunc='size', fill_value=0)
+              .reindex(index=range(7), columns=range(24), fill_value=0))
+    return grid
