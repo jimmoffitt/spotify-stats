@@ -14,6 +14,7 @@ import re
 import pandas as pd
 import streamlit as st
 
+import run_pipeline
 from src import charts, config, process_data as proc
 
 st.set_page_config(page_title="spotify-stats", page_icon="🎵", layout="wide")
@@ -324,8 +325,25 @@ def render_settings(df):
     st.write("**Data status**")
     st.write(f"- Plays loaded: {len(df):,}")
     st.write(f"- Date range: {df['ts'].min().date()} → {df['ts'].max().date()}")
-    if os.path.exists(config.LAST_SYNC_FILE):
-        st.write(f"- Last sync file: `{config.LAST_SYNC_FILE}`")
+    last = run_pipeline._read_last_sync()
+    st.write(f"- Last sync: {last.get('last_sync_at', 'never')} "
+             f"(+{last.get('last_new', 0)} new)")
+
+    authorized = os.path.exists(config.TOKEN_FILE)
+    if st.button("🔄 Sync Now", disabled=not authorized,
+                 help="Fetch the latest plays from Spotify (recently-played)."):
+        with st.spinner("Syncing recent plays…"):
+            try:
+                res = run_pipeline.sync()
+                st.cache_data.clear()
+                st.success(f"Synced {res['added']} new play(s); {res['total']:,} total. "
+                           "Reloading…")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Sync failed: {e}")
+    if not authorized:
+        st.caption("Sync needs one-time authorization: run "
+                   "`python -m src.setup_tokens` in a terminal, then reload.")
     st.write("**Preferences**")
     st.write(f"- Timezone: {settings.get('timezone') or 'system default'}")
     st.write(f"- Full-listen threshold: {settings.get('full_listen_threshold')}")
@@ -356,8 +374,6 @@ def render_settings(df):
         st.success("Saved. Toggle the sidebar filter or switch tabs to apply.")
     with st.expander("Raw JSON"):
         st.json(proc.load_exclusions())
-
-    st.caption("Sync Now (live API) is TODO — wires to fetch_data.fetch_recently_played.")
 
 
 if __name__ == "__main__":

@@ -18,45 +18,113 @@ and decades dominate, and when you actually listen.
   listening) per artist, with year or month (`2019-06`) resolution, toggleable
   live in the UI.
 
-## Setup
+## Getting started (one-time setup)
+
+You only do this once. After it, the app keeps itself current (see *Keeping your
+data current* below). These steps assume no prior terminal experience — copy each
+command exactly.
+
+**1. Install Python.** You need Python 3.9 or newer. Check with:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 --version
+```
+
+If that errors, install it from <https://www.python.org/downloads/>.
+
+**2. Get the code and install dependencies.** In a terminal, from the project
+folder:
+
+```bash
+python3 -m venv .venv          # create an isolated environment
+source .venv/bin/activate      # activate it (you'll see "(.venv)" in your prompt)
 pip install -r requirements.txt
 ```
 
-Optional — for genre/release-date enrichment and live sync, create a Spotify app
-at <https://developer.spotify.com/dashboard>, then copy `example.env` to
-`.local.env` and fill in your credentials:
+**3. Create a free Spotify app (for enrichment — genres, release dates).** Go to
+<https://developer.spotify.com/dashboard>, click **Create app**, give it any name,
+and set the **Redirect URI** to `http://localhost:8888/callback`. Open the app's
+**Settings** and copy the **Client ID** and **Client secret**.
+
+**4. Save your credentials.** Make your own credentials file from the template:
 
 ```bash
 cp example.env .local.env
-python -m src.setup_tokens     # one-time OAuth authorization
 ```
 
-## Usage
+Open `.local.env` in any text editor and paste your real values:
 
-1. Request your data from Spotify (Account → Privacy → *Download your data*,
-   "Extended streaming history"). Unzip and place the
-   `Streaming_History_Audio_*.json` files in `data/raw/`.
-2. Build the processed play log:
+```
+SPOTIFY_CLIENT_ID=<your Client ID>
+SPOTIFY_CLIENT_SECRET=<your Client secret>
+```
 
-   ```bash
-   python run_pipeline.py
-   ```
+(`.local.env` is never committed to git.)
 
-3. Launch the dashboard:
+**5. Request your listening history from Spotify.** In the Spotify web account
+page: **Account → Privacy settings → Download your data → Extended streaming
+history**. Spotify emails you a zip file — **this can take a few hours up to 30
+days**, so request it early. When it arrives, unzip it and copy the
+`Streaming_History_Audio_*.json` files into the `data/raw/` folder.
 
-   ```bash
-   python -m streamlit run app.py
-   ```
-
-Dev tool — export the top artists per year to CSV / Markdown without the UI:
+**6. Build your data (the "bootstrap").** This loads your history and enriches it.
+It makes hundreds of API calls, so it takes a few minutes:
 
 ```bash
-python export_top_artists.py            # top 10 by minutes
-python export_top_artists.py --help     # options
+python run_pipeline.py --bootstrap
+```
+
+**7. Open the dashboard:**
+
+```bash
+python -m streamlit run app.py
+```
+
+Your browser opens to the dashboard. **You're done** — step 6 never needs to
+happen again unless you import a fresh full export.
+
+## Keeping your data current
+
+Your one-time export is a snapshot. To capture plays *since* the export, the app
+syncs the most recent plays from Spotify's `recently-played` endpoint.
+
+**First, authorize sync (one time).** This is separate from the enrichment
+credentials and opens a browser to grant access:
+
+```bash
+python -m src.setup_tokens
+```
+
+Then choose how to keep current:
+
+**Option A — click a button.** In the dashboard's **⚙️ Settings** tab, press
+**🔄 Sync Now**. The endpoint returns the last ~50 plays, so syncing roughly
+twice a day keeps gaps impossible for most listeners.
+
+**Option B — automate it (recommended).** Add a scheduled job so you never have
+to remember. On macOS/Linux, run `crontab -e` and add one line (use your real
+project path):
+
+```bash
+# sync at 8am and 8pm daily; log output for troubleshooting
+0 8,20 * * * cd /path/to/spotify-stats && .venv/bin/python run_pipeline.py --sync >> data/sync.log 2>&1
+```
+
+Check `python run_pipeline.py --status` anytime to see the last sync time, total
+plays, and whether you're at risk of missing plays (a >12h gap during heavy
+listening can exceed the 50-play window).
+
+## Command reference
+
+```bash
+python run_pipeline.py --bootstrap   # one-time: load export + full enrichment
+python run_pipeline.py --sync        # incremental: fetch recent plays, dedupe, append
+python run_pipeline.py --enrich      # re-run enrichment + rebuild (add --force to refetch)
+python run_pipeline.py --status      # last sync time, total plays, gap risk
+python -m streamlit run app.py       # launch the dashboard
+
+# dev tool: top artists per year -> CSV / Markdown, no UI
+python export_top_artists.py --help
 ```
 
 ## Project structure

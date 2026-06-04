@@ -33,6 +33,10 @@ COUNTRY_METADATA_FILE = os.path.join(ENRICHED_DIR, 'country_metadata.json')  # P
 # Processed, fully-enriched play log
 PLAYS_FILE = os.path.join(PROCESSED_DIR, 'plays.parquet')
 
+# Incrementally-synced plays (from recently-played), kept separate from the
+# pristine GDPR export in data/raw/ but merged with it when building plays.parquet.
+SYNCED_PLAYS_FILE = os.path.join(DATA_DIR, 'synced_plays.json')
+
 # State + preferences
 LAST_SYNC_FILE = os.path.join(DATA_DIR, 'last_sync.json')
 SETTINGS_FILE = os.path.join(DATA_DIR, 'settings.json')

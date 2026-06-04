@@ -21,6 +21,7 @@ import glob
 import json
 import os
 import time
+from datetime import datetime, timezone
 
 import requests
 
@@ -129,6 +130,55 @@ def fetch_recently_played(access_token, after_ts=None, limit=config.RECENTLY_PLA
         raise ConnectionError(
             f"Error fetching recently-played: {response.status_code} {response.text}")
     return response.json().get('items', [])
+
+
+def _normalize_ts(played_at):
+    """'2026-06-04T12:34:56.789Z' -> '2026-06-04T12:34:56Z' (match GDPR precision)."""
+    dt = datetime.fromisoformat(played_at.replace('Z', '+00:00'))
+    return dt.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def latest_played_at_ms(items):
+    """Max played_at across recently-played items, as Unix ms (for the next 'after')."""
+    best = None
+    for it in items:
+        pa = it.get('played_at')
+        if not pa:
+            continue
+        ms = int(datetime.fromisoformat(pa.replace('Z', '+00:00')).timestamp() * 1000)
+        best = ms if best is None else max(best, ms)
+    return best
+
+
+def recently_played_to_records(items):
+    """
+    Convert /me/player/recently-played items into GDPR-shaped play records so
+    they merge seamlessly with the export. The API does NOT report how long a
+    track was listened to, so ms_played is approximated as the full track
+    duration (assume full listen); records are tagged with "_source": "sync".
+    Only music tracks are kept (podcast episodes are skipped).
+    """
+    records = []
+    for it in items:
+        track = it.get('track') or {}
+        uri = track.get('uri', '') or ''
+        played_at = it.get('played_at')
+        if not uri.startswith(config.TRACK_URI_PREFIX) or not played_at:
+            continue
+        album = track.get('album') or {}
+        artists = album.get('artists') or track.get('artists') or []
+        records.append({
+            'ts': _normalize_ts(played_at),
+            'ms_played': track.get('duration_ms', 0),  # API has no play duration
+            'master_metadata_track_name': track.get('name'),
+            'master_metadata_album_artist_name': artists[0]['name'] if artists else None,
+            'master_metadata_album_album_name': album.get('name'),
+            'spotify_track_uri': uri,
+            'skipped': False,
+            'reason_end': 'trackdone',
+            '_source': 'sync',
+        })
+    return records
 
 
 # --- GDPR export loader ---

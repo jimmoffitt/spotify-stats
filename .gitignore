@@ -18,6 +18,7 @@ data/download/
 data/enriched/
 # Processed outputs (plays.parquet, generated CSV/MD)
 data/processed/
+data/synced_plays.json
 data/last_sync.json
 
 # User settings — personal preferences, not shared
