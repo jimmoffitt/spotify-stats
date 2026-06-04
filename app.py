@@ -159,7 +159,7 @@ def render_artists(df, value_col, value_label):
     top = proc.top_artists(df, n=25)
     st.plotly_chart(charts.ranked_bar(top, 'artist_name', value_col,
                                       f"Top artists by {value_label.lower()}"),
-                    width='stretch')
+                    use_container_width=True)
     st.caption("Country choropleth requires Phase 2 MusicBrainz enrichment.")
 
 
@@ -196,7 +196,7 @@ def render_tracks(df, value_col, value_label):
     chart_df = top.assign(label=label)
     st.plotly_chart(charts.ranked_bar(chart_df, 'label', value_col,
                                       f"Top tracks by {value_label.lower()}"),
-                    width='stretch')
+                    use_container_width=True)
     st.dataframe(top, width='stretch', hide_index=True)
 
 
@@ -205,7 +205,7 @@ def render_albums(df, value_col, value_label):
     top = proc.top_albums(df, n=25)
     st.plotly_chart(charts.ranked_bar(top, 'album_name', value_col,
                                       f"Top albums by {value_label.lower()}"),
-                    width='stretch')
+                    use_container_width=True)
 
 
 def render_genres(df, value_col, value_label):
@@ -216,7 +216,7 @@ def render_genres(df, value_col, value_label):
         return
     st.plotly_chart(charts.ranked_bar(top, 'genres', value_col,
                                       f"Top genres by {value_label.lower()}"),
-                    width='stretch')
+                    use_container_width=True)
 
 
 def render_decades(df, value_col, value_label):
@@ -227,7 +227,7 @@ def render_decades(df, value_col, value_label):
         return
     st.plotly_chart(charts.decade_bar(dec, value_col,
                                       f"{value_label} by decade"),
-                    width='stretch')
+                    use_container_width=True)
 
 
 def render_wrapped(df):
@@ -263,7 +263,7 @@ def render_patterns(df):
     st.subheader("When do I listen?")
     grid = proc.patterns_heatmap(df)
     st.plotly_chart(charts.hour_dow_heatmap(grid, "Plays by hour and day of week"),
-                    width='stretch')
+                    use_container_width=True)
 
 
 def render_explore(df):
