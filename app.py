@@ -159,7 +159,7 @@ def render_artists(df, value_col, value_label):
     top = proc.top_artists(df, n=25)
     st.plotly_chart(charts.ranked_bar(top, 'artist_name', value_col,
                                       f"Top artists by {value_label.lower()}"),
-                    use_container_width=True)
+                    width='stretch')
     st.caption("Country choropleth requires Phase 2 MusicBrainz enrichment.")
 
 
@@ -182,7 +182,7 @@ def render_rankings(df):
             "Year range", options=years, value=(min(years), max(years)))
         wide = wide[[c for c in wide.columns if lo <= int(c) <= hi]]
 
-    st.dataframe(wide, use_container_width=True, height=38 * n + 60)
+    st.dataframe(wide, width='stretch', height=38 * n + 60)
     st.download_button(
         "Download Markdown table",
         proc.wide_to_markdown(wide, f"Top {n} artists per year — by {metric_key}"),
@@ -196,8 +196,8 @@ def render_tracks(df, value_col, value_label):
     chart_df = top.assign(label=label)
     st.plotly_chart(charts.ranked_bar(chart_df, 'label', value_col,
                                       f"Top tracks by {value_label.lower()}"),
-                    use_container_width=True)
-    st.dataframe(top, use_container_width=True, hide_index=True)
+                    width='stretch')
+    st.dataframe(top, width='stretch', hide_index=True)
 
 
 def render_albums(df, value_col, value_label):
@@ -205,7 +205,7 @@ def render_albums(df, value_col, value_label):
     top = proc.top_albums(df, n=25)
     st.plotly_chart(charts.ranked_bar(top, 'album_name', value_col,
                                       f"Top albums by {value_label.lower()}"),
-                    use_container_width=True)
+                    width='stretch')
 
 
 def render_genres(df, value_col, value_label):
@@ -216,7 +216,7 @@ def render_genres(df, value_col, value_label):
         return
     st.plotly_chart(charts.ranked_bar(top, 'genres', value_col,
                                       f"Top genres by {value_label.lower()}"),
-                    use_container_width=True)
+                    width='stretch')
 
 
 def render_decades(df, value_col, value_label):
@@ -227,7 +227,7 @@ def render_decades(df, value_col, value_label):
         return
     st.plotly_chart(charts.decade_bar(dec, value_col,
                                       f"{value_label} by decade"),
-                    use_container_width=True)
+                    width='stretch')
 
 
 def render_wrapped(df):
@@ -263,7 +263,7 @@ def render_patterns(df):
     st.subheader("When do I listen?")
     grid = proc.patterns_heatmap(df)
     st.plotly_chart(charts.hour_dow_heatmap(grid, "Plays by hour and day of week"),
-                    use_container_width=True)
+                    width='stretch')
 
 
 def render_explore(df):
@@ -282,7 +282,7 @@ def render_explore(df):
             'minutes_played', 'full_listen']
     st.caption(f"{len(results):,} plays")
     st.dataframe(results[cols].sort_values('ts_local', ascending=False).head(1000),
-                 use_container_width=True, hide_index=True)
+                 width='stretch', hide_index=True)
     st.download_button("Download CSV", results[cols].to_csv(index=False),
                        "plays_filtered.csv", "text/csv")
 
@@ -294,7 +294,7 @@ def render_export(df):
     annual = proc.plays_by_year(df)
     st.download_button("Annual summary (CSV)", annual.to_csv(index=False),
                        "annual_summary.csv", "text/csv")
-    st.dataframe(annual, use_container_width=True, hide_index=True)
+    st.dataframe(annual, width='stretch', hide_index=True)
 
 
 def render_settings(df):
@@ -318,7 +318,7 @@ def render_settings(df):
                "2011–2018 and keeps 2019 onward. Add rows with the ＋ at the bottom.")
     editor_df = _exclusions_to_df(proc.load_exclusions())
     edited = st.data_editor(
-        editor_df, num_rows="dynamic", use_container_width=True, key="excl_editor",
+        editor_df, num_rows="dynamic", width='stretch', key="excl_editor",
         column_config={
             _COL_ARTIST: st.column_config.TextColumn(_COL_ARTIST, required=True),
             _COL_ALL: st.column_config.CheckboxColumn(_COL_ALL, default=False),
