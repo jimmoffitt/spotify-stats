@@ -102,7 +102,7 @@ def main():
     # --- Sidebar: theme, metric, exclusions, year filter ---
     with st.sidebar:
         st.header("Filters")
-        dark = st.toggle("Dark charts", value=True)
+        dark = st.toggle("Dark charts", value=False)
         charts.set_theme(dark)
         metric = st.radio("Rank by", ["Plays", "Minutes"], horizontal=True)
         apply_excl = st.toggle(

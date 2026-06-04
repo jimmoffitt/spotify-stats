@@ -68,8 +68,8 @@ def ranked_bar(df, name_col, value_col='plays', title=None, height=None):
     fig.update_layout(**_base_layout(
         title=title,
         xaxis=dict(title=value_col, gridcolor=_grid_color()),
-        yaxis=dict(title=None, automargin=True),
-        height=height or max(300, 28 * len(df) + 80),
+        yaxis=dict(title=None, automargin=True, tickfont=dict(size=15)),
+        height=height or max(300, 30 * len(df) + 80),
     ))
     return fig
 
