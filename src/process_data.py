@@ -292,46 +292,43 @@ def load_plays(path=config.PLAYS_FILE):
 
 # --- aggregation helpers (used by the dashboard tabs) ---
 
-def _agg_counts(df, group_col):
-    """Plays + total minutes per group, sorted by plays desc."""
+def _agg_counts(df, group_col, metric='plays'):
+    """Plays + total minutes per group, sorted by `metric` ('plays'/'minutes') desc."""
     out = (df.groupby(group_col)
              .agg(plays=('ts', 'size'),
                   minutes=('minutes_played', 'sum'))
-             .reset_index()
-             .sort_values('plays', ascending=False))
+             .reset_index())
     out['minutes'] = out['minutes'].round(1)
-    return out
+    return out.sort_values(metric, ascending=False)
 
 
-def top_artists(df, n=20):
-    return _agg_counts(df, 'artist_name').head(n)
+def top_artists(df, n=20, metric='plays'):
+    return _agg_counts(df, 'artist_name', metric).head(n)
 
 
-def top_tracks(df, n=20):
+def top_tracks(df, n=20, metric='plays'):
     out = (df.groupby(['track_name', 'artist_name'])
              .agg(plays=('ts', 'size'),
                   minutes=('minutes_played', 'sum'))
-             .reset_index()
-             .sort_values('plays', ascending=False))
+             .reset_index())
     out['minutes'] = out['minutes'].round(1)
-    return out.head(n)
+    return out.sort_values(metric, ascending=False).head(n)
 
 
-def top_albums(df, n=20):
-    """Top albums by play count, keyed by (album, artist) so the artist is known."""
+def top_albums(df, n=20, metric='plays'):
+    """Top albums by `metric`, keyed by (album, artist) so the artist is known."""
     out = (df.groupby(['album_name', 'artist_name'])
              .agg(plays=('ts', 'size'),
                   minutes=('minutes_played', 'sum'))
-             .reset_index()
-             .sort_values('plays', ascending=False))
+             .reset_index())
     out['minutes'] = out['minutes'].round(1)
-    return out.head(n)
+    return out.sort_values(metric, ascending=False).head(n)
 
 
-def top_genres(df, n=20):
+def top_genres(df, n=20, metric='plays'):
     """Explode the list-valued genres column before aggregating."""
     exploded = df.explode('genres').dropna(subset=['genres'])
-    return _agg_counts(exploded, 'genres').head(n)
+    return _agg_counts(exploded, 'genres', metric).head(n)
 
 
 def plays_by_year(df):

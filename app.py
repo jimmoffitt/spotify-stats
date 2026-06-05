@@ -176,7 +176,7 @@ def main():
 
 def render_artists(df, value_col, value_label):
     st.subheader("Top artists")
-    top = proc.top_artists(df, n=25)
+    top = proc.top_artists(df, n=25, metric=value_col)
     st.plotly_chart(charts.ranked_bar(top, 'artist_name', value_col,
                                       f"Top artists by {value_label.lower()}"),
                     use_container_width=True)
@@ -211,7 +211,7 @@ def render_rankings(df):
 
 def render_tracks(df, value_col, value_label):
     st.subheader("Top tracks")
-    top = proc.top_tracks(df, n=25)
+    top = proc.top_tracks(df, n=25, metric=value_col)
     label = top['track_name'] + " — " + top['artist_name']
     chart_df = top.assign(label=label)
     st.plotly_chart(charts.ranked_bar(chart_df, 'label', value_col,
@@ -222,7 +222,7 @@ def render_tracks(df, value_col, value_label):
 
 def render_albums(df, value_col, value_label):
     st.subheader("Top albums")
-    top = proc.top_albums(df, n=25)
+    top = proc.top_albums(df, n=25, metric=value_col)
     label = top['artist_name'].fillna('Unknown') + " — " + top['album_name'].fillna('Unknown')
     chart_df = top.assign(label=label)
     st.plotly_chart(charts.ranked_bar(chart_df, 'label', value_col,
@@ -232,7 +232,7 @@ def render_albums(df, value_col, value_label):
 
 def render_genres(df, value_col, value_label):
     st.subheader("Top genres")
-    top = proc.top_genres(df, n=25)
+    top = proc.top_genres(df, n=25, metric=value_col)
     if top.empty:
         st.info("No genre data yet — run artist enrichment.")
         return

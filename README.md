@@ -18,6 +18,18 @@ and decades dominate, and when you actually listen.
   listening) per artist, with year or month (`2019-06`) resolution, toggleable
   live in the UI.
 
+## Screenshots
+
+**🎸 Artists** — all-time top artists, rankable by plays or minutes:
+
+![Artists tab](docs/screenshots/artists.png)
+
+**🏆 Rankings** — your top artists for every year, side by side:
+
+![Rankings tab](docs/screenshots/rankings.png)
+
+_Generated from the live dashboard with `python gen_screenshots.py`._
+
 ## Getting started (one-time setup)
 
 You only do this once. After it, the app keeps itself current (see *Keeping your
@@ -61,11 +73,38 @@ SPOTIFY_CLIENT_SECRET=<your Client secret>
 
 (`.local.env` is never committed to git.)
 
-**5. Request your listening history from Spotify.** In the Spotify web account
-page: **Account → Privacy settings → Download your data → Extended streaming
-history**. Spotify emails you a zip file — **this can take a few hours up to 30
-days**, so request it early. When it arrives, unzip it and copy the
-`Streaming_History_Audio_*.json` files into the `data/raw/` folder.
+**5. Request your listening history archive from Spotify.** This is the most
+important step, and the one with a wait — start it early.
+
+  - Go to your Spotify **Account → Privacy settings**
+    (<https://www.spotify.com/account/privacy/>).
+  - Scroll to **Download your data**. Spotify offers two kinds of export —
+    **check the box for "Extended streaming history"** (the complete play-by-play
+    history this app needs). The default "Account data" option is a smaller,
+    less detailed summary and is *not* enough.
+  - Click **Request data** and confirm via the email Spotify sends.
+  - **Wait.** Extended history can take anywhere from a few hours to ~30 days to
+    arrive (it usually lands in a few days). Spotify emails a download link when
+    it's ready.
+
+  When the zip arrives, unzip it. Inside is a folder named **`Spotify Extended
+  Streaming History`** containing files like:
+
+  ```
+  Streaming_History_Audio_2016.json
+  Streaming_History_Audio_2017_1.json
+  ...
+  Streaming_History_Video_2024.json      <- ignored (video, not music)
+  ```
+
+  Copy the **`Streaming_History_Audio_*.json`** files into this project's
+  **`data/raw/`** folder. (You can copy the whole folder's contents if it's
+  easier — the loader only reads the `Audio` files and ignores the rest.) Nothing
+  in `data/` is ever committed to git.
+
+  > Re-importing later: when you request a fresh export down the road, just drop
+  > the new `Streaming_History_Audio_*.json` files into `data/raw/` (replacing the
+  > old ones) and re-run the bootstrap in the next step.
 
 **6. Build your data (the "bootstrap").** This loads your history and enriches it.
 It makes hundreds of API calls, so it takes a few minutes:
@@ -131,14 +170,16 @@ python export_top_artists.py --help
 
 ```
 app.py               # Streamlit dashboard (all tabs)
-run_pipeline.py      # CLI: load export → enrich → process → plays.parquet
+run_pipeline.py      # CLI: --bootstrap / --sync / --enrich / --status
 export_top_artists.py# dev tool: top-N artists per year → CSV / Markdown
+gen_screenshots.py   # dev tool: render README screenshots → docs/screenshots/
 src/
   config.py          # paths, constants, OAuth config
   fetch_data.py      # Spotify OAuth/refresh, recently-played, GDPR loader
   enrich_data.py     # track + artist metadata enrichment (Spotify API)
   process_data.py    # DataFrame build, aggregations, exclusions
   charts.py          # Plotly figure factories
+docs/screenshots/    # README images (committed)
 data/                # local data (gitignored)
 ```
 
