@@ -129,7 +129,7 @@ def main():
             "Remove kid streams?", value=True,
             help="Filter out the artists/years configured under Settings → "
                  "Artist exclusions (e.g. shared-account years).")
-        years = sorted(df_all['year'].dropna().unique().tolist())
+        years = sorted(df_all['year'].dropna().unique().tolist(), reverse=True)
         year_sel = st.selectbox("Year", ["All years"] + [str(y) for y in years])
 
     df = proc.apply_exclusions(df_all, exclusions) if apply_excl else df_all
