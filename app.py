@@ -145,6 +145,41 @@ def _sidebar_filters(df_all, show):
     return dark, metric, apply_excl, year_sel
 
 
+def _sidebar_data(df_all):
+    """Compact data-freshness footer in the sidebar: how current the data is,
+    plus a one-click Sync. Shown on every page so updating is always at hand."""
+    st.divider()
+    st.markdown("**Data**")
+    # A sync just finished on the previous run — surface it now (post-rerun).
+    done = st.session_state.pop('_sync_msg', None)
+    if done:
+        st.toast(done, icon="✅")
+
+    st.caption(f"Latest play: {df_all['ts'].max().date()}")
+    at = run_pipeline._read_last_sync().get('last_sync_at')
+    if at:
+        hrs = (pd.Timestamp.now(tz='UTC') - pd.Timestamp(at)).total_seconds() / 3600
+        when = ("just now" if hrs < 1 else
+                f"{hrs:.0f}h ago" if hrs < 48 else f"{hrs / 24:.0f}d ago")
+        st.caption(f"Synced {when}")
+    else:
+        st.caption("Never synced")
+
+    authorized = os.path.exists(config.TOKEN_FILE)
+    if st.button("🔄 Sync now", disabled=not authorized, width='stretch',
+                 help="Fetch your latest plays from Spotify (recently-played)."):
+        with st.spinner("Syncing…"):
+            try:
+                res = run_pipeline.sync()
+                st.cache_data.clear()
+                st.session_state['_sync_msg'] = f"Synced {res['added']} new play(s)."
+                st.rerun()
+            except Exception as e:
+                st.error(f"Sync failed: {e}")
+    if not authorized:
+        st.caption("Authorize once in a terminal: `python -m src.setup_tokens`")
+
+
 def main():
     if not os.path.exists(config.PLAYS_FILE):
         st.title("🎵 spotify-stats")
@@ -168,6 +203,7 @@ def main():
     def _wrapped():  render_wrapped(ctx['df'])
     def _patterns(): render_patterns(ctx['view'])
     def _bands():    render_bands(ctx['df'])
+    def _artist_filters(): render_artist_filters(df_all)
     def _explore():  render_explore(ctx['view'])
     def _export():   render_export(ctx['view'])
     def _settings(): render_settings(ctx['df'])
@@ -184,6 +220,8 @@ def main():
         st.Page(_decades,  title="Decades",  icon="📅", url_path="decades"),
     ]
     utilities = [
+        st.Page(_artist_filters, title="Artist filters", icon="🚫",
+                url_path="artist-filters"),
         st.Page(_explore,  title="Explore",  icon="🔍", url_path="explore"),
         st.Page(_export,   title="Export",   icon="📤", url_path="export"),
         st.Page(_settings, title="Settings", icon="⚙️", url_path="settings"),
@@ -205,6 +243,7 @@ def main():
         st.markdown("**Utilities**")
         for p in utilities:
             st.page_link(p)
+        _sidebar_data(df_all)
     charts.set_theme(dark)
 
     excl_mtime = (os.path.getmtime(config.EXCLUSIONS_FILE)
@@ -564,44 +603,22 @@ def render_export(df):
     st.dataframe(annual, width='stretch', hide_index=True)
 
 
-def render_settings(df):
-    st.subheader("Settings")
-    settings = proc.load_settings()
-    st.write("**Data status**")
-    st.write(f"- Plays loaded: {len(df):,}")
-    st.write(f"- Date range: {df['ts'].min().date()} → {df['ts'].max().date()}")
-    last = run_pipeline._read_last_sync()
-    st.write(f"- Last sync: {last.get('last_sync_at', 'never')} "
-             f"(+{last.get('last_new', 0)} new)")
-
-    authorized = os.path.exists(config.TOKEN_FILE)
-    if st.button("🔄 Sync Now", disabled=not authorized,
-                 help="Fetch the latest plays from Spotify (recently-played)."):
-        with st.spinner("Syncing recent plays…"):
-            try:
-                res = run_pipeline.sync()
-                st.cache_data.clear()
-                st.success(f"Synced {res['added']} new play(s); {res['total']:,} total. "
-                           "Reloading…")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Sync failed: {e}")
-    if not authorized:
-        st.caption("Sync needs one-time authorization: run "
-                   "`python -m src.setup_tokens` in a terminal, then reload.")
-    st.write("**Preferences**")
-    st.write(f"- Timezone: {settings.get('timezone') or 'system default'}")
-    st.write(f"- Full-listen threshold: {settings.get('full_listen_threshold')}")
-
-    st.divider()
-    st.write("**Artist exclusions**")
-    st.caption("Drop an artist's plays for shared-account periods. Per row: tick "
-               "**All years**, or set a **Before** / **After** bound, or a "
-               "comma-separated **Only** list. Bounds take a year (`2019`) or a "
-               "month (`2019-06`). **Keep %** claims only a share of that period "
-               "(e.g. `50` for a 50/50 split with a kid); blank = drop all. "
-               "Example — Lorde, *Before* = `2020`, *Keep %* = `50` keeps half of "
-               "pre-2020 plays. Add rows with the ＋ at the bottom.")
+def render_artist_filters(df_all):
+    """The exclusions editor — a primary concept, so it's its own Utilities page
+    (not buried in Settings). Powers the sidebar 'Remove kid streams?' toggle."""
+    st.subheader("🚫 Artist filters")
+    st.write("Drop plays that weren't really yours — e.g. a shared-account "
+             "period when the kids used your profile. These rules drive the "
+             "sidebar **Remove kid streams?** toggle on the Analytics pages.")
+    removed = len(df_all) - len(proc.apply_exclusions(df_all, proc.load_exclusions()))
+    st.caption(f"These filters currently remove **{removed:,}** plays "
+               f"of {len(df_all):,}.")
+    st.caption("Per row: tick **All years**, or set a **Before** / **After** "
+               "bound, or a comma-separated **Only** list. Bounds take a year "
+               "(`2019`) or a month (`2019-06`). **Keep %** claims only a share "
+               "of that period (e.g. `50` for a 50/50 split with a kid); blank = "
+               "drop all. Example — Lorde, *Before* = `2020`, *Keep %* = `50` "
+               "keeps half of pre-2020 plays. Add rows with the ＋ at the bottom.")
     editor_df = _exclusions_to_df(proc.load_exclusions())
     edited = st.data_editor(
         editor_df, num_rows="dynamic", width='stretch', key="excl_editor",
@@ -614,11 +631,29 @@ def render_settings(df):
             _COL_KEEP: st.column_config.NumberColumn(
                 _COL_KEEP, min_value=0, max_value=100, step=5, format="%d"),
         })
-    if st.button("Save exclusions"):
+    if st.button("Save filters"):
         proc.save_exclusions(_df_to_exclusions(edited))
-        st.success("Saved. Toggle the sidebar filter or switch tabs to apply.")
+        st.success("Saved. Toggle the sidebar filter or switch pages to apply.")
     with st.expander("Raw JSON"):
         st.json(proc.load_exclusions())
+
+
+def render_settings(df):
+    st.subheader("Settings")
+    settings = proc.load_settings()
+    last = run_pipeline._read_last_sync()
+    st.write("**Data status**")
+    st.write(f"- Plays loaded: {len(df):,}")
+    st.write(f"- Date range: {df['ts'].min().date()} → {df['ts'].max().date()}")
+    st.write(f"- Last sync: {last.get('last_sync_at', 'never')} "
+             f"(+{last.get('last_new', 0)} new)")
+    st.write(f"- Sync authorized: {os.path.exists(config.TOKEN_FILE)}")
+    st.caption("Use the sidebar **🔄 Sync now** to fetch recent plays, and "
+               "**🚫 Artist filters** to choose which artists to exclude.")
+
+    st.write("**Preferences**")
+    st.write(f"- Timezone: {settings.get('timezone') or 'system default'}")
+    st.write(f"- Full-listen threshold: {settings.get('full_listen_threshold')}")
 
 
 if __name__ == "__main__":
