@@ -99,7 +99,9 @@ The left sidebar is mission control, split into three blocks:
   - **Rank by** — Plays or Minutes.
   - **Remove kid streams?** — apply your exclusions (on by default).
   - **Dark charts** — light/dark chart theme.
-- **Utilities** — Explore, Export, and Settings.
+- **Utilities** — Artist filters, Explore, Export, and Settings.
+- **Data** — a footer showing how current your data is, with a **🔄 Sync now**
+  button.
 
 ### 🗓️ Wrapped — start here
 
@@ -157,6 +159,19 @@ listening down by the *release* decade of the music.
 
 ## Utilities
 
+### 🚫 Artist filters — make the stats *yours*
+
+**Why use it:** shared a Spotify account during some years (kids on your
+profile, a partner's phase)? Those plays distort every chart. Artist filters let
+you drop them. Each row removes an artist for **all years**, **before/after** a
+given year (or month, e.g. `2019-06`), **specific years**, or a **Keep %** share
+— so you can split a shared artist 50/50 rather than dropping them outright. A
+live line shows how many plays the current rules remove. The rules are stored
+once and switched on/off everywhere via the sidebar **Remove kid streams?**
+toggle.
+
+![Artist filters page](screenshots/guide/artist_filters.png)
+
 ### 🔍 Explore — find the needle in the play log
 
 **Why use it:** the Analytics pages summarize; Explore lets you *interrogate*.
@@ -181,21 +196,23 @@ exactly that view — a clean, portable copy of just the listening you care abou
 
 ![Export page](screenshots/guide/export.png)
 
-### ⚙️ Settings — data, syncing, and filters
+### ⚙️ Settings — data status & preferences
 
-Settings is where you keep the dataset healthy and tune the filters:
+Settings is a quick read-out, not a control panel (the two things you act on —
+syncing and artist filters — have their own homes, below):
 
-- **Data status** — plays loaded, date range, and last sync time.
-- **🔄 Sync Now** — fetch the latest plays from Spotify's recently-played feed
-  (needs the one-time authorization from *Get started* step 6).
+- **Data status** — plays loaded, date range, last sync, and whether sync is
+  authorized.
 - **Preferences** — your timezone and the full-listen threshold.
-- **Artist exclusions** — the editable table behind the *Remove kid streams*
-  toggle. Each row drops an artist for **all years**, before/after a given year
-  (or month), specific years, or a **Keep %** share (for a shared-account split,
-  e.g. keep 50% of an artist's pre-2020 plays). Add rows with the ＋, then
-  **Save exclusions**.
 
 ![Settings page](screenshots/guide/settings.png)
+
+### Keeping data fresh — the sidebar **Data** panel
+
+Syncing is a primary action, so it lives at the bottom of the sidebar on every
+page: it shows your **latest play** and how long ago you last synced, with a
+**🔄 Sync now** button that pulls your most recent plays from Spotify's
+recently-played feed (after the one-time authorization in *Get started* step 6).
 
 ---
 

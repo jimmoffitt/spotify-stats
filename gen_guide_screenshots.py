@@ -81,6 +81,7 @@ SHOTS = [
     ("/bands",    "bands_single.png", "Search artist"),
     ("/bands",    "bands_groups.png", "Single band", _open_groups),
     ("/patterns", "patterns.png",     "When do I listen?"),
+    ("/artist-filters", "artist_filters.png", "Artist filters"),
     ("/explore",  "explore.png",      "Explore"),
     ("/export",   "export.png",       "Export"),
     ("/settings", "settings.png",     "Settings"),
