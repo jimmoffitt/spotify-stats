@@ -8,6 +8,13 @@ src/charts.py. Run the pipeline first to build the parquet:
     python run_pipeline.py
     streamlit run app.py
 """
+# Silence urllib3's NotOpenSSLWarning: the system Python 3.9 links against
+# LibreSSL 2.8.3, which urllib3 v2 doesn't certify. Harmless for our use.
+# Match by message — importing the warning class would trigger it first.
+import warnings
+
+warnings.filterwarnings("ignore", message=r"urllib3 v2 only supports OpenSSL")
+
 import os
 import re
 
@@ -17,13 +24,22 @@ import streamlit as st
 import run_pipeline
 from src import charts, config, process_data as proc
 
-st.set_page_config(page_title="spotify-stats", page_icon="🎵", layout="wide")
+st.set_page_config(page_title="spotify-stats", page_icon="🎵", layout="wide",
+                   initial_sidebar_state="expanded")
 
 
 @st.cache_data
 def load_plays_cached(path, mtime):
     """Cached parquet load. `mtime` busts the cache when the file changes."""
     return proc.load_plays(path)
+
+
+@st.cache_data
+def filtered_plays_cached(path, mtime, excl_mtime):
+    """Exclusion-filtered frame, cached so toggling tabs/filters is instant.
+    `mtime`/`excl_mtime` bust the cache when the parquet or exclusions change."""
+    df_all = load_plays_cached(path, mtime)
+    return proc.apply_exclusions(df_all, proc.load_exclusions())
 
 
 def metric_columns(metric):
@@ -108,68 +124,109 @@ def _df_to_exclusions(edited):
     return {"exclude": rules}
 
 
-def main():
-    st.title("🎵 spotify-stats")
+def _sidebar_filters(df_all, show):
+    """Render the shared filters (Analytics pages only). Assumes the caller is
+    already inside the sidebar context, so the block can sit between the two
+    nav groups. When `show` is False (Utilities pages) it renders nothing and
+    returns defaults. Returns (dark, metric, apply_excl, year_sel).
+    """
+    if not show:
+        return False, "Plays", True, "All years"
+    st.divider()
+    st.markdown("**Filters**")
+    years = sorted(df_all['year'].dropna().unique().tolist(), reverse=True)
+    year_sel = st.selectbox("Year", ["All years"] + [str(y) for y in years])
+    metric = st.radio("Rank by", ["Plays", "Minutes"], horizontal=True)
+    apply_excl = st.toggle(
+        "Remove kid streams?", value=True,
+        help="Filter out the artists/years configured under Settings → "
+             "Artist exclusions (e.g. shared-account years).")
+    dark = st.toggle("Dark charts", value=False)
+    return dark, metric, apply_excl, year_sel
 
+
+def main():
     if not os.path.exists(config.PLAYS_FILE):
+        st.title("🎵 spotify-stats")
         st.info("No processed data yet. Drop your GDPR export into `data/raw/` "
                 "and run `python run_pipeline.py`.")
         return
 
     df_all = load_plays_cached(config.PLAYS_FILE, os.path.getmtime(config.PLAYS_FILE))
-    exclusions = proc.load_exclusions()
 
-    # --- Sidebar: theme, metric, exclusions, year filter ---
+    # Shared context the page callables read at render time. Populated below,
+    # after the sidebar filters resolve — but before pg.run() invokes a page.
+    ctx = {}
+
+    # Page wrappers: st.Page needs zero-arg callables, so each reads from ctx.
+    def _artists():  render_artists(ctx['view'], ctx['value_col'], ctx['value_label'])
+    def _rankings(): render_rankings(ctx['df'])
+    def _tracks():   render_tracks(ctx['view'], ctx['value_col'], ctx['value_label'])
+    def _albums():   render_albums(ctx['view'], ctx['value_col'], ctx['value_label'])
+    def _genres():   render_genres(ctx['view'], ctx['value_col'], ctx['value_label'])
+    def _decades():  render_decades(ctx['view'], ctx['value_col'], ctx['value_label'])
+    def _wrapped():  render_wrapped(ctx['df'])
+    def _patterns(): render_patterns(ctx['view'])
+    def _bands():    render_bands(ctx['df'])
+    def _explore():  render_explore(ctx['view'])
+    def _export():   render_export(ctx['view'])
+    def _settings(): render_settings(ctx['df'])
+
+    analytics = [
+        st.Page(_wrapped,  title="Wrapped",  icon="🗓️", url_path="wrapped", default=True),
+        st.Page(_artists,  title="Artists",  icon="🎸", url_path="artists"),
+        st.Page(_rankings, title="Rankings", icon="🏆", url_path="rankings"),
+        st.Page(_tracks,   title="Tracks",   icon="🎵", url_path="tracks"),
+        st.Page(_albums,   title="Albums",   icon="💿", url_path="albums"),
+        st.Page(_bands,    title="Bands",    icon="🎤", url_path="bands"),
+        st.Page(_genres,   title="Genres",   icon="🎼", url_path="genres"),
+        st.Page(_patterns, title="Patterns", icon="🕐", url_path="patterns"),
+        st.Page(_decades,  title="Decades",  icon="📅", url_path="decades"),
+    ]
+    utilities = [
+        st.Page(_explore,  title="Explore",  icon="🔍", url_path="explore"),
+        st.Page(_export,   title="Export",   icon="📤", url_path="export"),
+        st.Page(_settings, title="Settings", icon="⚙️", url_path="settings"),
+    ]
+
+    # Route via st.navigation (so the selected page survives reruns — no more
+    # snap-back), but hide its built-in nav so we can build the sidebar by hand
+    # and slot the Filters between the Analytics and Utilities groups.
+    pg = st.navigation({"Analytics": analytics, "Utilities": utilities},
+                       position="hidden")
+    is_analytics = pg.url_path in {p.url_path for p in analytics}
+
     with st.sidebar:
-        st.header("Filters")
-        dark = st.toggle("Dark charts", value=False)
-        charts.set_theme(dark)
-        metric = st.radio("Rank by", ["Plays", "Minutes"], horizontal=True)
-        apply_excl = st.toggle(
-            "Remove kid streams?", value=True,
-            help="Filter out the artists/years configured under Settings → "
-                 "Artist exclusions (e.g. shared-account years).")
-        years = sorted(df_all['year'].dropna().unique().tolist(), reverse=True)
-        year_sel = st.selectbox("Year", ["All years"] + [str(y) for y in years])
+        st.markdown("**Analytics**")
+        for p in analytics:
+            st.page_link(p)
+        dark, metric, apply_excl, year_sel = _sidebar_filters(df_all, is_analytics)
+        st.divider()
+        st.markdown("**Utilities**")
+        for p in utilities:
+            st.page_link(p)
+    charts.set_theme(dark)
 
-    df = proc.apply_exclusions(df_all, exclusions) if apply_excl else df_all
+    excl_mtime = (os.path.getmtime(config.EXCLUSIONS_FILE)
+                  if os.path.exists(config.EXCLUSIONS_FILE) else 0)
+    df = (filtered_plays_cached(config.PLAYS_FILE,
+                                os.path.getmtime(config.PLAYS_FILE), excl_mtime)
+          if apply_excl else df_all)
     n_excluded = len(df_all) - len(df)
 
     value_col, value_label = metric_columns(metric)
     view = df if year_sel == "All years" else df[df['year'] == int(year_sel)]
+    ctx.update(df=df, view=view, value_col=value_col, value_label=value_label)
 
-    caption = (f"{len(view):,} plays · {view['minutes_played'].sum()/60:,.0f} hours "
-               f"· {view['artist_name'].nunique():,} artists")
-    caption += (f"  ·  🧒 filtered ({n_excluded:,} kid streams removed)"
-                if apply_excl and n_excluded else "  ·  unfiltered (all streams)")
-    st.caption(caption)
+    st.title("🎵 spotify-stats")
+    if is_analytics:
+        caption = (f"{len(view):,} plays · {view['minutes_played'].sum()/60:,.0f} "
+                   f"hours · {view['artist_name'].nunique():,} artists")
+        caption += (f"  ·  🧒 filtered ({n_excluded:,} kid streams removed)"
+                    if apply_excl and n_excluded else "  ·  unfiltered (all streams)")
+        st.caption(caption)
 
-    tabs = st.tabs(["🎸 Artists", "🏆 Rankings", "🎵 Tracks", "💿 Albums",
-                    "🎼 Genres", "📅 Decades", "🗓️ Wrapped", "🕐 Patterns",
-                    "🔍 Explore", "📤 Export", "⚙️ Settings"])
-
-    with tabs[0]:
-        render_artists(view, value_col, value_label)
-    with tabs[1]:
-        render_rankings(df)  # cross-year rank chart — uses the full dataset
-    with tabs[2]:
-        render_tracks(view, value_col, value_label)
-    with tabs[3]:
-        render_albums(view, value_col, value_label)
-    with tabs[4]:
-        render_genres(view, value_col, value_label)
-    with tabs[5]:
-        render_decades(view, value_col, value_label)
-    with tabs[6]:
-        render_wrapped(df)  # Wrapped picks its own window
-    with tabs[7]:
-        render_patterns(view)
-    with tabs[8]:
-        render_explore(view)
-    with tabs[9]:
-        render_export(view)
-    with tabs[10]:
-        render_settings(df)
+    pg.run()
 
 
 # --- Tab renderers ---
@@ -196,11 +253,18 @@ def render_rankings(df):
     wide = proc.top_artists_wide(df, n=n, metric=metric_key, show_values=show_values)
 
     # Year navigation: limit which year columns are shown (the table is wide).
-    years = [int(c) for c in wide.columns]
-    if len(years) > 1:
-        lo, hi = st.select_slider(
-            "Year range", options=years, value=(min(years), max(years)))
+    # Options run newest-first so the slider reads left-to-right as 2026 → older;
+    # the handles come back in that order, so min/max recover the actual range.
+    years_desc = sorted((int(c) for c in wide.columns), reverse=True)
+    if len(years_desc) > 1:
+        sel = st.select_slider(
+            "Year range", options=years_desc,
+            value=(years_desc[0], years_desc[-1]))
+        lo, hi = min(sel), max(sel)
         wide = wide[[c for c in wide.columns if lo <= int(c) <= hi]]
+
+    # Present newest-first: current year on the left, older years to the right.
+    wide = wide[list(reversed(wide.columns))]
 
     st.dataframe(wide, width='stretch', height=38 * n + 60)
     st.download_button(
@@ -252,7 +316,64 @@ def render_decades(df, value_col, value_label):
                     use_container_width=True)
 
 
+_WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+             'Saturday', 'Sunday']
+
+
+def _fmt_hour(h):
+    """24h int -> friendly clock label: 0 -> '12am', 13 -> '1pm'."""
+    return f"{h % 12 or 12}{'am' if h < 12 else 'pm'}"
+
+
+def render_alltime(df):
+    """All-time totals + records (all years, but honoring the kid-stream
+    exclusion toggle), shown atop the Wrapped tab."""
+    st.subheader("🏅 All-time")
+    s = proc.alltime_stats(df)
+    if not s:
+        st.info("No data yet.")
+        return
+
+    c = st.columns(4)
+    c[0].metric("Plays", f"{s['total_plays']:,}")
+    c[1].metric("Hours", f"{s['total_hours']:,.0f}")
+    c[2].metric("Listening days", f"{s['listening_days']:,}")
+    c[3].metric("Span", f"{s['span_years']} yrs")
+    c = st.columns(4)
+    c[0].metric("Artists", f"{s['unique_artists']:,}")
+    c[1].metric("Tracks", f"{s['unique_tracks']:,}")
+    c[2].metric("Albums", f"{s['unique_albums']:,}")
+    c[3].metric("Genres", f"{s['unique_genres']:,}")
+
+    share = s['top_artist'][1] / s['total_plays'] * 100
+    day, day_n = s['busiest_day']
+    mon, mon_n = s['busiest_month']
+    yr, yr_n = s['biggest_year']
+    left = [
+        f"🔥 **Busiest day:** {day} ({day_n:,} plays)",
+        f"📆 **Busiest month:** {mon} ({mon_n:,})",
+        f"🗓️ **Biggest year:** {yr} ({yr_n:,})",
+        f"🔁 **Longest streak:** {s['longest_streak']} days in a row",
+        f"🕐 **Peak hour:** {_fmt_hour(s['peak_hour'])}  ·  "
+        f"**Top day:** {_WEEKDAYS[s['top_weekday']]}",
+    ]
+    right = [
+        f"🥇 **#1 artist:** {s['top_artist'][0]} "
+        f"({s['top_artist'][1]:,} plays · {share:.1f}% of all)",
+        f"🎵 **#1 track:** {s['top_track'][0]} ({s['top_track'][1]:,})",
+        f"💿 **#1 album:** {s['top_album'][0]} ({s['top_album'][1]:,})",
+        f"🎼 **#1 genre:** {s['top_genre'][0]} ({s['top_genre'][1]:,})",
+        f"⏯️ **{s['avg_hours_per_week']} hrs/week**  ·  full-listen "
+        f"{s['full_listen_rate']*100:.0f}%, skip {s['skip_rate']*100:.0f}%",
+    ]
+    col1, col2 = st.columns(2)
+    col1.markdown("\n\n".join(left))
+    col2.markdown("\n\n".join(right))
+
+
 def render_wrapped(df):
+    render_alltime(df)
+    st.divider()
     st.subheader("Wrapped")
     window = st.selectbox("Window", ["Last 30 days", "All-time"] +
                           [str(y) for y in sorted(df['year'].dropna().unique(), reverse=True)])
@@ -286,6 +407,130 @@ def render_patterns(df):
     grid = proc.patterns_heatmap(df)
     st.plotly_chart(charts.hour_dow_heatmap(grid, "Plays by hour and day of week"),
                     use_container_width=True)
+
+
+def render_bands(df):
+    """Bands tab: single-band deep dive + saved group summaries (full archive)."""
+    st.subheader("🎤 Bands")
+    mode = st.radio("Mode", ["Single band", "Groups"], horizontal=True,
+                    key="bands_mode")
+    if mode == "Single band":
+        render_single_band(df)
+    else:
+        render_groups(df)
+
+
+def render_single_band(df):
+    artists = proc.list_artists(df)  # sorted by plays desc
+    if not artists:
+        st.info("No artists in the data.")
+        return
+
+    st.caption("Quick pick — your top artists:")
+    cols = st.columns(5)
+    for i, name in enumerate(artists[:10]):
+        if cols[i % 5].button(name, key=f"qp_{i}", use_container_width=True):
+            st.session_state['band_pick'] = name
+
+    # Selectbox is the source of truth; quick-pick buttons seed its index.
+    cur = st.session_state.get('band_pick', artists[0])
+    idx = artists.index(cur) if cur in artists else 0
+    artist = st.selectbox("Search artist", artists, index=idx)
+    st.session_state['band_pick'] = artist
+
+    f = proc.artist_facts(df, artist)
+    sub = df[df['artist_name'] == artist]
+    years = (f['last_played'] - f['first_played']).days / 365.25
+
+    c = st.columns(4)
+    c[0].metric("Plays", f"{f['plays']:,}")
+    c[1].metric("Hours", f"{f['hours']:,.0f}")
+    c[2].metric("Rank", f"#{f['rank']} / {f['total_artists']:,}")
+    c[3].metric("Peak year", f"{f['peak_year']} ({f['peak_year_plays']:,})")
+    st.caption(
+        f"In rotation {f['first_played'].date()} → {f['last_played'].date()} "
+        f"(~{years:.1f} yrs)  ·  full-listen {f['full_listen_rate']*100:.0f}%, "
+        f"skip {f['skip_rate']*100:.0f}%")
+
+    st.plotly_chart(charts.line_by_year(proc.plays_by_year(sub), 'plays',
+                    f"{artist} — plays per year"), use_container_width=True)
+    col1, col2 = st.columns(2)
+    col1.plotly_chart(charts.ranked_bar(proc.top_tracks(sub, 10), 'track_name',
+                      'plays', "Top tracks"), use_container_width=True)
+    col2.plotly_chart(charts.ranked_bar(proc.top_albums(sub, 10), 'album_name',
+                      'plays', "Top albums"), use_container_width=True)
+    st.plotly_chart(charts.hour_dow_heatmap(proc.patterns_heatmap(sub),
+                    f"{artist} — listening clock"), use_container_width=True)
+
+
+def render_groups(df):
+    groups = proc.load_groups()
+    names = sorted(groups)
+    choice = st.selectbox("Group", ["➕ New group…"] + names)
+    is_new = choice == "➕ New group…"
+    cur_name = "" if is_new else choice
+    cur_members = [] if is_new else groups.get(choice, [])
+    artists = proc.list_artists(df)
+
+    # Key widgets by the selected group so switching groups resets the editor,
+    # while edits within a group persist across reruns.
+    name = st.text_input("Group name", value=cur_name, key=f"gname_{choice}")
+    members = st.multiselect(
+        "Bands in this group", artists,
+        default=[m for m in cur_members if m in artists],
+        key=f"gmembers_{choice}",
+        help="Type to filter your artists (sorted by play count).")
+
+    c1, c2, _ = st.columns([1, 1, 4])
+    if c1.button("💾 Save", disabled=not (name.strip() and members)):
+        if cur_name and cur_name != name.strip():
+            groups.pop(cur_name, None)  # treat a name change as a rename
+        groups[name.strip()] = members
+        proc.save_groups(groups)
+        st.success(f"Saved '{name.strip()}' ({len(members)} bands).")
+        st.rerun()
+    if not is_new and c2.button("🗑 Delete"):
+        groups.pop(choice, None)
+        proc.save_groups(groups)
+        st.success(f"Deleted '{choice}'.")
+        st.rerun()
+
+    if members:
+        st.divider()
+        render_group_summary(df, name.strip() or "Group", members)
+    else:
+        st.info("Add bands above to see a group summary.")
+
+
+def render_group_summary(df, name, members):
+    sub = df[df['artist_name'].isin(members)]
+    if sub.empty:
+        st.info("No plays found for these bands.")
+        return
+
+    total, hours = len(sub), sub['minutes_played'].sum() / 60
+    share = total / len(df) * 100
+    st.markdown(f"### {name}")
+    c = st.columns(4)
+    c[0].metric("Bands", len(members))
+    c[1].metric("Plays", f"{total:,}")
+    c[2].metric("Hours", f"{hours:,.0f}")
+    c[3].metric("Share of all plays", f"{share:.1f}%")
+    st.caption(f"{sub['ts'].min().date()} → {sub['ts'].max().date()}")
+
+    bd = proc.group_breakdown(df, members)
+    show = bd.copy()
+    show['First'] = pd.to_datetime(show['first_played'], utc=True).dt.date
+    show['Last'] = pd.to_datetime(show['last_played'], utc=True).dt.date
+    show = show[['artist_name', 'plays', 'minutes', 'rank', 'First', 'Last']].rename(
+        columns={'artist_name': 'Band', 'plays': 'Plays', 'minutes': 'Minutes',
+                 'rank': 'Overall rank'})
+    st.dataframe(show, hide_index=True, width='stretch')
+
+    st.plotly_chart(charts.line_by_year(proc.plays_by_year(sub), 'plays',
+                    f"{name} — plays per year"), use_container_width=True)
+    st.plotly_chart(charts.ranked_bar(proc.top_tracks(sub, 15), 'track_name',
+                    'plays', f"{name} — top tracks"), use_container_width=True)
 
 
 def render_explore(df):

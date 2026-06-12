@@ -67,6 +67,26 @@ def save_exclusions(exclusions, path=config.EXCLUSIONS_FILE):
         json.dump(exclusions, f, indent=2, ensure_ascii=False)
 
 
+def load_groups(path=config.GROUPS_FILE):
+    """
+    Load saved band groups. Schema maps a group name to a list of artist names:
+
+        {"New Zealand": ["Crowded House", "Lorde", "Fat Freddy's Drop"]}
+
+    Keyed by artist name (matches df['artist_name']). Missing file -> {}.
+    """
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+
+def save_groups(groups, path=config.GROUPS_FILE):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(groups, f, indent=2, ensure_ascii=False)
+
+
 def _month_index(year, month):
     """Map a (year, month) to a single comparable integer (months since year 0)."""
     return int(year) * 12 + (int(month) - 1)
@@ -399,3 +419,127 @@ def patterns_heatmap(df):
                            values='ts', aggfunc='size', fill_value=0)
               .reindex(index=range(7), columns=range(24), fill_value=0))
     return grid
+
+
+# --- Single-artist / group / all-time summaries (Bands + Wrapped tabs) ---
+
+def list_artists(df, metric='plays'):
+    """Artist names sorted by `metric` desc — for pickers and multiselects."""
+    if df.empty:
+        return []
+    return _agg_counts(df, 'artist_name', metric)['artist_name'].tolist()
+
+
+def artist_rankings(df, metric='plays'):
+    """All artists ranked by `metric`, with a 1-based 'rank' column."""
+    out = _agg_counts(df, 'artist_name', metric).reset_index(drop=True)
+    out['rank'] = out.index + 1
+    return out
+
+
+def _consecutive_day_streak(dates):
+    """Longest run of consecutive calendar days among an iterable of dates."""
+    days = sorted(set(dates))
+    if not days:
+        return 0
+    longest = run = 1
+    for prev, cur in zip(days, days[1:]):
+        run = run + 1 if (cur - prev).days == 1 else 1
+        longest = max(longest, run)
+    return longest
+
+
+def artist_facts(df, artist, metric='plays'):
+    """Headline facts for one artist over `df` (pass the full archive)."""
+    sub = df[df['artist_name'] == artist]
+    if sub.empty:
+        return None
+    ranks = artist_rankings(df, metric)
+    rank_row = ranks[ranks['artist_name'] == artist]
+    by_year = plays_by_year(sub)
+    peak = by_year.loc[by_year['plays'].idxmax()] if not by_year.empty else None
+    return {
+        'artist': artist,
+        'plays': int(len(sub)),
+        'hours': round(sub['minutes_played'].sum() / 60, 1),
+        'rank': int(rank_row['rank'].iloc[0]) if not rank_row.empty else None,
+        'total_artists': int(len(ranks)),
+        'first_played': sub['ts'].min(),
+        'last_played': sub['ts'].max(),
+        'peak_year': int(peak['year']) if peak is not None else None,
+        'peak_year_plays': int(peak['plays']) if peak is not None else None,
+        'skip_rate': round(sub['skipped'].mean(), 3),
+        'full_listen_rate': round(sub['full_listen'].mean(), 3),
+    }
+
+
+def group_breakdown(df, artists, metric='plays'):
+    """Per-band table for a group: plays, minutes, first/last play, overall rank."""
+    ranks = artist_rankings(df, metric).set_index('artist_name')
+    rows = []
+    for name in artists:
+        sub = df[df['artist_name'] == name]
+        if sub.empty:
+            rows.append({'artist_name': name, 'plays': 0, 'minutes': 0.0,
+                         'first_played': pd.NaT, 'last_played': pd.NaT, 'rank': pd.NA})
+            continue
+        rows.append({
+            'artist_name': name,
+            'plays': int(len(sub)),
+            'minutes': round(sub['minutes_played'].sum(), 1),
+            'first_played': sub['ts'].min(),
+            'last_played': sub['ts'].max(),
+            'rank': int(ranks.loc[name, 'rank']) if name in ranks.index else pd.NA,
+        })
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    return out.sort_values(metric, ascending=False).reset_index(drop=True)
+
+
+def alltime_stats(df):
+    """Whole-archive totals + records for the Wrapped All-Time widget."""
+    if df.empty:
+        return {}
+    dates = df['ts_local'].dt.date
+    total_hours = df['minutes_played'].sum() / 60
+    span_days = max((df['ts'].max() - df['ts'].min()).days, 1)
+
+    by_day = df.groupby(dates).size()
+    by_month = df.groupby(df['ts_local'].dt.strftime('%Y-%m')).size()
+    by_year = df.groupby('year').size()
+    by_hour = df.groupby('hour').size()
+    by_dow = df.groupby('day_of_week').size()
+
+    def _top1(agg_func):
+        t = agg_func(df, n=1)
+        return t.iloc[0] if len(t) else None
+
+    art, trk, alb, gen = (_top1(top_artists), _top1(top_tracks),
+                          _top1(top_albums), _top1(top_genres))
+
+    return {
+        'total_plays': int(len(df)),
+        'total_hours': round(total_hours),
+        'unique_artists': int(df['artist_name'].nunique()),
+        'unique_tracks': int(df.groupby(['track_name', 'artist_name']).ngroups),
+        'unique_albums': int(df['album_name'].nunique()),
+        'unique_genres': int(df.explode('genres')['genres'].dropna().nunique()),
+        'listening_days': int(dates.nunique()),
+        'first_play': df['ts'].min(),
+        'last_play': df['ts'].max(),
+        'span_years': round(span_days / 365.25, 1),
+        'avg_hours_per_week': round(total_hours / (span_days / 7), 1),
+        'longest_streak': _consecutive_day_streak(dates),
+        'busiest_day': (str(by_day.idxmax()), int(by_day.max())),
+        'busiest_month': (str(by_month.idxmax()), int(by_month.max())),
+        'biggest_year': (int(by_year.idxmax()), int(by_year.max())),
+        'peak_hour': int(by_hour.idxmax()),
+        'top_weekday': int(by_dow.idxmax()),
+        'skip_rate': round(df['skipped'].mean(), 3),
+        'full_listen_rate': round(df['full_listen'].mean(), 3),
+        'top_artist': (art['artist_name'], int(art['plays'])) if art is not None else None,
+        'top_track': (f"{trk['track_name']} — {trk['artist_name']}", int(trk['plays'])) if trk is not None else None,
+        'top_album': (f"{alb['album_name']} — {alb['artist_name']}", int(alb['plays'])) if alb is not None else None,
+        'top_genre': (gen['genres'], int(gen['plays'])) if gen is not None else None,
+    }

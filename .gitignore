@@ -20,10 +20,17 @@ data/enriched/
 data/processed/
 data/synced_plays.json
 data/last_sync.json
+# Auto-sync logs (launchd job + wrapper output)
+data/*.log
+# Ad-hoc review exports (e.g. kid-band exclusion candidates)
+data/*.csv
+# Backups of personal config (e.g. exclusions.json.bak)
+data/*.bak
 
 # User settings — personal preferences, not shared
 data/settings.json
 data/exclusions.json
+data/groups.json
 
 # Local Claude Code settings (personal, machine-specific)
 .claude/settings.local.json

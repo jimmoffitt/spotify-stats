@@ -43,6 +43,9 @@ SETTINGS_FILE = os.path.join(DATA_DIR, 'settings.json')
 # Per-year artist exclusions (e.g. shared-account years). Maps a year string
 # (or "*" for all years) to a list of artist names to drop from all stats.
 EXCLUSIONS_FILE = os.path.join(DATA_DIR, 'exclusions.json')
+# Saved band groups (e.g. "New Zealand" -> list of artist names). Powers the
+# group summaries on the Bands tab. Keyed by artist name (see load_groups).
+GROUPS_FILE = os.path.join(DATA_DIR, 'groups.json')
 
 # 3. Secrets / OAuth
 CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
