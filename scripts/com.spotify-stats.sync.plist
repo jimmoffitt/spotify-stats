@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for spotify-stats incremental sync.
+
+  Runs scripts/auto_sync.sh every hour (StartInterval = 3600s). launchd fires
+  a missed run once the Mac wakes, so coverage survives sleep. Install with:
+
+      cp scripts/com.spotify-stats.sync.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.spotify-stats.sync.plist
+
+  Stop/remove with:
+
+      launchctl unload ~/Library/LaunchAgents/com.spotify-stats.sync.plist
+
+  Requires data/spotify_tokens.json (run `python -m src.setup_tokens` once).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.spotify-stats.sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jimmoffitt/projects/spotify-stats/scripts/auto_sync.sh</string>
+    </array>
+
+    <!-- Every hour. -->
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <!-- Also sync once right when the agent loads / you log in. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- launchd's own stdout/stderr (the script logs detail to data/sync.log). -->
+    <key>StandardOutPath</key>
+    <string>/Users/jimmoffitt/projects/spotify-stats/data/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jimmoffitt/projects/spotify-stats/data/launchd.err.log</string>
+</dict>
+</plist>

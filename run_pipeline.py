@@ -17,6 +17,13 @@ Commands:
 Enrichment uses the app-only Client Credentials token (no browser). --sync also
 needs the user-authorized token from `python -m src.setup_tokens`.
 """
+# Silence urllib3's NotOpenSSLWarning (system Python 3.9 links LibreSSL, which
+# urllib3 v2 doesn't certify). Harmless, and it keeps the auto-sync log clean.
+# Match by message — importing the warning class would trigger it first.
+import warnings
+
+warnings.filterwarnings("ignore", message=r"urllib3 v2 only supports OpenSSL")
+
 import argparse
 import json
 import os
