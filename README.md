@@ -2,33 +2,50 @@
 
 A personal Spotify listening-history dashboard built with [Streamlit](https://streamlit.io/).
 It turns your Spotify **Extended Streaming History** export into the views that
-Spotify Wrapped leaves out: how your taste shifts year over year, which artists
-and decades dominate, and when you actually listen.
+Spotify Wrapped leaves out: how your taste shifts year over year, which artists,
+albums, and decades dominate, when you actually listen, and deep-dives on any
+band or group of bands.
+
+![spotify-stats — the Rankings view](docs/screenshots/app-ui.png)
+
+A grouped sidebar navigates the views; shared filters (year, plays-vs-minutes,
+kid-stream removal) apply across them; and the whole thing runs on *years* of
+your history, not just the last twelve months.
 
 ## Features
 
-- **GDPR loader** — reads the `Streaming_History_Audio_*.json` files from your
-  Spotify data export and merges them into one clean play log.
-- **Rankings** — top artists per year (a years-across-the-top rank chart),
-  rankable by play count or minutes listened.
-- **Artists / Tracks / Albums / Genres / Decades** — all-time and per-year tops.
-- **Patterns** — an hour-of-day × day-of-week listening heatmap.
-- **Wrapped / Explore / Export** — period summaries, full-text search, CSV export.
-- **Artist exclusions** — filter out shared-account streams (e.g. a kid's
-  listening) per artist, with year or month (`2019-06`) resolution, toggleable
-  live in the UI.
+- **🗓️ Wrapped** — an all-time snapshot (lifetime totals plus records: busiest
+  day, longest streak, all-time #1s) and a Wrapped-style recap for any window.
+- **🏆 Rankings** — your top artists for every year side by side, newest first,
+  ranked by play count or minutes.
+- **🎸 Artists / 🎵 Tracks / 💿 Albums / 🎼 Genres / 📅 Decades** — all-time and
+  per-year tops, by plays or minutes.
+- **🎤 Bands** — single-artist deep-dives (rank among your artists, peak year,
+  listening clock) and saveable **groups** of bands with combined summaries.
+- **🕐 Patterns** — an hour-of-day × day-of-week listening heatmap.
+- **🔍 Explore / 📤 Export** — full-text search of the raw play log, and CSV exports.
+- **🚫 Artist filters** — drop shared-account streams (e.g. a kid's listening)
+  per artist, with year/month (`2019-06`) resolution or a keep-% split; toggle
+  live from the sidebar.
+- **🔄 Stay current** — one-click **Sync now** in the sidebar (plus an optional
+  hourly background job) pulls recent plays on top of your export.
 
 ## Screenshots
 
-**🎸 Artists** — all-time top artists, rankable by plays or minutes:
+**🗓️ Wrapped** — your all-time totals and records, plus a windowed recap:
 
-![Artists tab](docs/screenshots/artists.png)
+![Wrapped tab](docs/screenshots/guide/wrapped.png)
 
-**🏆 Rankings** — your top artists for every year, side by side:
+**🎤 Bands** — bundle artists into groups and summarize them together:
 
-![Rankings tab](docs/screenshots/rankings.png)
+![Bands groups](docs/screenshots/guide/bands_groups.png)
 
-_Generated from the live dashboard with `python gen_screenshots.py`._
+**🕐 Patterns** — when you listen, by hour and day of week:
+
+![Patterns tab](docs/screenshots/guide/patterns.png)
+
+_Full-UI screenshots are regenerated with `python gen_guide_screenshots.py`. For
+a complete walkthrough, see the **[User's Guide](docs/USER_GUIDE.md)**._
 
 ## Getting started (one-time setup)
 
@@ -55,8 +72,12 @@ pip install -r requirements.txt
 
 **3. Create a free Spotify app (for enrichment — genres, release dates).** Go to
 <https://developer.spotify.com/dashboard>, click **Create app**, give it any name,
-and set the **Redirect URI** to `http://localhost:8888/callback`. Open the app's
+and set the **Redirect URI** to `http://127.0.0.1:8888/callback`. Open the app's
 **Settings** and copy the **Client ID** and **Client secret**.
+
+> ⚠️ Use the IP literal **`127.0.0.1`**, not `localhost` — Spotify no longer
+> accepts `localhost` redirect URIs, and the string here must match
+> `SPOTIFY_REDIRECT_URI` in your `.local.env` exactly.
 
 **4. Save your credentials.** Make your own credentials file from the template:
 
@@ -69,9 +90,11 @@ Open `.local.env` in any text editor and paste your real values:
 ```
 SPOTIFY_CLIENT_ID=<your Client ID>
 SPOTIFY_CLIENT_SECRET=<your Client secret>
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/callback
 ```
 
-(`.local.env` is never committed to git.)
+(`.local.env` is never committed to git. The redirect URI must match the one you
+registered in the Spotify dashboard, character for character.)
 
 **5. Request your listening history archive from Spotify.** This is the most
 important step, and the one with a wait — start it early.
@@ -136,12 +159,24 @@ python -m src.setup_tokens
 
 Then choose how to keep current:
 
-**Option A — click a button.** In the dashboard's **⚙️ Settings** tab, press
-**🔄 Sync Now**. The endpoint returns the last ~50 plays, so syncing roughly
-twice a day keeps gaps impossible for most listeners.
+**Option A — click a button.** In the dashboard's left **sidebar**, the **Data**
+panel shows your latest play and last sync; press **🔄 Sync now**. The endpoint
+returns the last ~50 plays, so syncing roughly twice a day keeps gaps impossible
+for most listeners.
 
 **Option B — automate it (recommended).** Add a scheduled job so you never have
-to remember. On macOS/Linux, run `crontab -e` and add one line (use your real
+to remember.
+
+On **macOS**, a ready-made LaunchAgent is included — it runs an hourly sync via
+`scripts/auto_sync.sh` and logs to `data/sync.log`:
+
+```bash
+cp scripts/com.spotify-stats.sync.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.spotify-stats.sync.plist
+# (edit the absolute paths in the plist / script to match your checkout first)
+```
+
+On **Linux**, a cron line does the same — run `crontab -e` and add (use your real
 project path):
 
 ```bash
@@ -169,18 +204,23 @@ python export_top_artists.py --help
 ## Project structure
 
 ```
-app.py               # Streamlit dashboard (all tabs)
-run_pipeline.py      # CLI: --bootstrap / --sync / --enrich / --status
-export_top_artists.py# dev tool: top-N artists per year → CSV / Markdown
-gen_screenshots.py   # dev tool: render README screenshots → docs/screenshots/
+app.py                  # Streamlit dashboard (sidebar nav + all views)
+run_pipeline.py         # CLI: --bootstrap / --sync / --enrich / --status
+export_top_artists.py   # dev tool: top-N artists per year → CSV / Markdown
+gen_screenshots.py      # dev tool: render bare Plotly figures → docs/screenshots/
+gen_guide_screenshots.py# dev tool: full-UI screenshots via Playwright → docs/screenshots/guide/
+scripts/                # macOS LaunchAgent + wrapper for hourly auto-sync
 src/
-  config.py          # paths, constants, OAuth config
-  fetch_data.py      # Spotify OAuth/refresh, recently-played, GDPR loader
-  enrich_data.py     # track + artist metadata enrichment (Spotify API)
-  process_data.py    # DataFrame build, aggregations, exclusions
-  charts.py          # Plotly figure factories
-docs/screenshots/    # README images (committed)
-data/                # local data (gitignored)
+  config.py             # paths, constants, OAuth config
+  fetch_data.py         # Spotify OAuth/refresh, recently-played, GDPR loader
+  enrich_data.py        # track + artist metadata enrichment (Spotify API)
+  process_data.py       # DataFrame build, aggregations, exclusions, groups
+  charts.py             # Plotly figure factories
+docs/
+  USER_GUIDE.md         # full walkthrough of the dashboard
+  HOSTED_USER_GUIDE.md  # draft design for a hosted, bring-your-own-history mode
+  screenshots/          # README + guide images (committed)
+data/                   # local data (gitignored)
 ```
 
 ## Data retrieval & storage
@@ -214,7 +254,8 @@ credentials never get committed.
 | `data/enriched/track_metadata.json` | Per-track duration / release / album | API cache | No |
 | `data/enriched/artist_metadata.json` | Per-artist genres / popularity | API cache | No |
 | `data/processed/plays.parquet` | Merged, enriched, one row per play | Built locally | No |
-| `data/exclusions.json` | Your shared-account filter rules | You / Settings tab | No |
+| `data/exclusions.json` | Your shared-account filter rules | You / Artist filters page | No |
+| `data/groups.json` | Saved band groups | You / Bands page | No |
 | `data/settings.json` | Timezone, full-listen threshold | You | No |
 | `data/spotify_tokens.json` | User OAuth tokens (sync only) | `setup_tokens` | No |
 | `.local.env` | `SPOTIFY_CLIENT_ID` / `SECRET` | You | No |
@@ -244,10 +285,10 @@ command** — your laptop. The browser is just the UI. A few consequences:
   gitignored and won't exist on a deploy. Provide `SPOTIFY_CLIENT_ID` /
   `SPOTIFY_CLIENT_SECRET` through the host's secrets mechanism (e.g. Streamlit
   Cloud *Secrets*, or environment variables).
-- **The OAuth sync flow assumes localhost.** `setup_tokens` redirects to
-  `http://localhost:8888/callback`, which only works when you run it on your own
-  machine. The browser-only/hosted path can't complete that handshake without a
-  publicly reachable redirect URI registered in your Spotify app.
+- **The OAuth sync flow assumes a loopback redirect.** `setup_tokens` redirects
+  to `http://127.0.0.1:8888/callback`, which only works when you run it on your
+  own machine. The browser-only/hosted path can't complete that handshake without
+  a publicly reachable redirect URI registered in your Spotify app.
 - **Ephemeral hosts don't persist writes.** On platforms with an ephemeral
   filesystem, anything the app writes (updated `plays.parquet`, edited
   `exclusions.json`) is lost on restart. Treat hosted instances as read-only
@@ -255,6 +296,10 @@ command** — your laptop. The browser is just the UI. A few consequences:
 
 In short: do the data work locally (export → `run_pipeline.py`), and treat any
 browser/hosted instance as a viewer of those locally-built files.
+
+> A **multi-user, bring-your-own-history** hosted mode (each visitor uploads
+> their own export, processed per session) is sketched as a design doc in
+> [`docs/HOSTED_USER_GUIDE.md`](docs/HOSTED_USER_GUIDE.md) — not yet implemented.
 
 ## Contributors
 
