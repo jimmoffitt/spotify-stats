@@ -90,18 +90,20 @@ A LaunchAgent can run the sync hourly in the background — see the README.
 
 ### The sidebar
 
-The left sidebar is mission control, split into three blocks:
+The left sidebar is mission control, split into four blocks:
 
 - **Analytics** — the nine analysis pages. Click to switch; your place sticks
   even after you press a button or edit a table.
-- **Filters** — the shared controls that apply across Analytics pages:
-  - **Year** — focus on a single year, or *All years*.
+- **Filters** — shared controls for the Analytics pages:
+  - **Date range** — *All time*, *Last 7 days*, *Last 30 days*, *This month*,
+    or a single year.
   - **Rank by** — Plays or Minutes.
+- **Data** — how current your data is: the timestamp (UTC) and track/artist of
+  your latest play, how long ago you last synced, and a **🔄 Sync now** button.
+- **Tools & settings** — Artist filters, Explore, Export, and Settings, plus
+  two options that apply everywhere (not just the Analytics pages):
   - **Remove kid streams?** — apply your exclusions (on by default).
   - **Dark charts** — light/dark chart theme.
-- **Utilities** — Artist filters, Explore, Export, and Settings.
-- **Data** — a footer showing how current your data is, with a **🔄 Sync now**
-  button.
 
 ### 🗓️ Wrapped — start here
 
@@ -115,9 +117,9 @@ recaps any window you pick (last 30 days, a year, or all-time).
 
 ### 🎸 Artists, 🎵 Tracks, 💿 Albums, 🎼 Genres
 
-Your top-25 lists. Use the sidebar **Year** to scope them and **Rank by** to
-switch between play count and listening time. The header caption always tells
-you how many plays/hours/artists are in the current view.
+Your top-25 lists. Use the sidebar **Date range** to scope them and **Rank by**
+to switch between play count and listening time. The header caption always
+tells you how many plays/hours/artists are in the current view.
 
 ![Artists page](screenshots/guide/artists.png)
 
@@ -150,14 +152,16 @@ all your listening**, and a per-band breakdown. Below, a "New Zealand" group of
 ### 🕐 Patterns & 📅 Decades
 
 **Patterns** plots plays across hour-of-day × day-of-week, so your listening
-rhythm (late-night sessions, weekday commutes) pops out. **Decades** breaks
-listening down by the *release* decade of the music.
+rhythm (late-night sessions, weekday commutes) pops out — a ranked **Top 5
+listening hours** list sits below the heatmap for a quick read without having
+to squint at the grid. **Decades** breaks listening down by the *release*
+decade of the music.
 
 ![Patterns page](screenshots/guide/patterns.png)
 
 ---
 
-## Utilities
+## Tools & settings
 
 ### 🚫 Artist filters — make the stats *yours*
 
@@ -207,21 +211,22 @@ syncing and artist filters — have their own homes, below):
 
 ![Settings page](screenshots/guide/settings.png)
 
-### Keeping data fresh — the sidebar **Data** panel
+### Keeping data fresh — the sidebar **Data** section
 
-Syncing is a primary action, so it lives at the bottom of the sidebar on every
-page: it shows your **latest play** and how long ago you last synced, with a
-**🔄 Sync now** button that pulls your most recent plays from Spotify's
-recently-played feed (after the one-time authorization in *Get started* step 6).
+Syncing is a primary action, so it lives in its own block on every page: it
+shows the timestamp (UTC) and track/artist of your **latest play**, how long
+ago you last synced, and a **🔄 Sync now** button that pulls your most recent
+plays from Spotify's recently-played feed (after the one-time authorization in
+*Get started* step 6).
 
 ---
 
 ## Tips
 
-- **Numbers look off?** Check the **Remove kid streams** toggle and the **Year**
-  filter in the sidebar — together they decide what's counted.
+- **Numbers look off?** Check the **Remove kid streams** toggle and the **Date
+  range** filter in the sidebar — together they decide what's counted.
 - **All-time vs. windowed.** The Wrapped All-time panel and the Bands tab ignore
-  the **Year** filter (they're all-time by nature) but still honor the
+  the **Date range** filter (they're all-time by nature) but still honor the
   kid-stream toggle.
 - **Regenerate these screenshots** anytime with
   `python gen_guide_screenshots.py`.

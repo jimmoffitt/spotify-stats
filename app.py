@@ -472,9 +472,21 @@ def render_wrapped(df):
 
 def render_patterns(df):
     st.subheader("When do I listen?")
+    if df.empty:
+        st.info("No plays in this range.")
+        return
     grid = proc.patterns_heatmap(df)
     st.plotly_chart(charts.hour_dow_heatmap(grid, "Plays by hour and day of week"),
                     use_container_width=True)
+
+    st.markdown("**Top 5 listening hours**")
+    top5 = proc.top_hours(df, n=5)
+    lines = [
+        f"{i}. **{_fmt_hour(int(row['hour']))}** — {row['plays']:,} plays "
+        f"({row['plays'] / len(df) * 100:.1f}% of all)"
+        for i, row in enumerate(top5.to_dict('records'), start=1)
+    ]
+    st.markdown("\n".join(lines))
 
 
 def render_bands(df):

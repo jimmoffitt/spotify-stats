@@ -427,6 +427,12 @@ def decade_breakdown(df):
     return _agg_counts(df.dropna(subset=['decade']), 'decade').sort_values('decade')
 
 
+def top_hours(df, n=24, metric='plays'):
+    """Total plays/minutes per hour-of-day (0-23), sorted by `metric` desc —
+    the ranked-hours list under the Patterns heatmap."""
+    return _agg_counts(df, 'hour', metric).head(n)
+
+
 def patterns_heatmap(df):
     """day_of_week (0-6) x hour (0-23) play-count grid for the Patterns tab."""
     grid = (df.pivot_table(index='day_of_week', columns='hour',
