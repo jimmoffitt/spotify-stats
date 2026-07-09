@@ -58,11 +58,20 @@ def ranked_bar(df, name_col, value_col='plays', title=None, height=None):
     Expects df pre-sorted descending; flips so the largest sits at the top.
     """
     d = df.iloc[::-1]  # plotly draws bottom-up; reverse so rank 1 is on top
+    # Label each bar with its value directly (inside if the bar's long enough
+    # to fit it, else just outside the tip) — these lists run tall enough that
+    # the x-axis scale is often scrolled out of view.
+    num_fmt = ',.0f' if value_col == 'plays' else ',.1f'
     fig = go.Figure(go.Bar(
         x=d[value_col],
         y=d[name_col].astype(str),
         orientation='h',
         marker_color=SPOTIFY_GREEN,
+        text=d[value_col],
+        texttemplate=f'%{{text:{num_fmt}}}',
+        textposition='auto',
+        textfont=dict(color=_font_color()),
+        cliponaxis=False,
         hovertemplate=f'%{{y}}<br>{value_col}: %{{x}}<extra></extra>',
     ))
     fig.update_layout(**_base_layout(

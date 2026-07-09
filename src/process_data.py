@@ -251,6 +251,8 @@ def build_plays_df(plays, track_cache, artist_cache, settings=None):
     df['release_year'] = df['track_uri'].map(
         lambda u: _release_year((track_cache.get(u) or {}).get('release_date')))
     df['decade'] = (df['release_year'] // 10 * 10).astype('Int64')
+    df['album_id'] = df['track_uri'].map(
+        lambda u: (track_cache.get(u) or {}).get('album_id'))
 
     # 4. Artist enrichment: genres (union across the track's artists).
     df['genres'] = df['track_uri'].map(
@@ -327,22 +329,34 @@ def top_artists(df, n=20, metric='plays'):
 
 
 def top_tracks(df, n=20, metric='plays'):
-    out = (df.groupby(['track_name', 'artist_name'])
-             .agg(plays=('ts', 'size'),
+    """Top tracks by `metric`, grouped by track_uri rather than track name.
+    Spotify sometimes edits a track's display title after release (e.g. a
+    remaster relabeled '2010 Remastered' -> 'Remastered 2010', or a curly vs.
+    straight quote in the name) — grouping by name would silently split one
+    song's plays across near-duplicate rows."""
+    out = (df.groupby(['track_uri', 'artist_name'])
+             .agg(track_name=('track_name', lambda s: s.mode().iat[0]),
+                  plays=('ts', 'size'),
                   minutes=('minutes_played', 'sum'))
              .reset_index())
     out['minutes'] = out['minutes'].round(1)
-    return out.sort_values(metric, ascending=False).head(n)
+    return out.sort_values(metric, ascending=False).head(n)[
+        ['track_name', 'artist_name', 'plays', 'minutes']]
 
 
 def top_albums(df, n=20, metric='plays'):
-    """Top albums by `metric`, keyed by (album, artist) so the artist is known."""
-    out = (df.groupby(['album_name', 'artist_name'])
-             .agg(plays=('ts', 'size'),
+    """Top albums by `metric`, grouped by album_id rather than album name — the
+    same rationale as top_tracks: reissues/deluxe editions relabel the album
+    name (e.g. 'Stoney' vs 'Stoney - Deluxe') without changing the tracks."""
+    out = (df.dropna(subset=['album_id'])
+             .groupby(['album_id', 'artist_name'])
+             .agg(album_name=('album_name', lambda s: s.mode().iat[0]),
+                  plays=('ts', 'size'),
                   minutes=('minutes_played', 'sum'))
              .reset_index())
     out['minutes'] = out['minutes'].round(1)
-    return out.sort_values(metric, ascending=False).head(n)
+    return out.sort_values(metric, ascending=False).head(n)[
+        ['album_name', 'artist_name', 'plays', 'minutes']]
 
 
 def top_genres(df, n=20, metric='plays'):
@@ -522,8 +536,8 @@ def alltime_stats(df):
         'total_plays': int(len(df)),
         'total_hours': round(total_hours),
         'unique_artists': int(df['artist_name'].nunique()),
-        'unique_tracks': int(df.groupby(['track_name', 'artist_name']).ngroups),
-        'unique_albums': int(df['album_name'].nunique()),
+        'unique_tracks': int(df['track_uri'].nunique()),
+        'unique_albums': int(df['album_id'].nunique()),
         'unique_genres': int(df.explode('genres')['genres'].dropna().nunique()),
         'listening_days': int(dates.nunique()),
         'first_play': df['ts'].min(),

@@ -47,6 +47,28 @@ def metric_columns(metric):
     return ('minutes', 'Minutes') if metric == 'Minutes' else ('plays', 'Plays')
 
 
+# "All time" first so it stays the default (index 0) selectbox choice.
+_RANGE_PRESETS = ["All time", "Last 7 days", "Last 30 days", "This month"]
+
+
+def _apply_range(df, sel):
+    """Apply a date-range selection: one of _RANGE_PRESETS, or a year string.
+    Presets are relative to the most recent play in `df` (not wall-clock
+    'now'), so a stale sync doesn't make 'Last 7 days' look emptier than it
+    actually is."""
+    if df.empty or sel == "All time":
+        return df
+    latest = df['ts_local'].max()
+    if sel == "This month":
+        return df[(df['ts_local'].dt.year == latest.year) &
+                  (df['ts_local'].dt.month == latest.month)]
+    if sel == "Last 7 days":
+        return df[df['ts_local'] >= latest - pd.Timedelta(days=7)]
+    if sel == "Last 30 days":
+        return df[df['ts_local'] >= latest - pd.Timedelta(days=30)]
+    return df[df['year'] == int(sel)]
+
+
 # Editor columns. Bounds accept a year ("2019") or a year-month ("2019-06").
 _COL_ARTIST, _COL_ALL = "Artist", "All years"
 _COL_BEFORE, _COL_AFTER = "Before (YYYY or YYYY-MM)", "After (YYYY or YYYY-MM)"
@@ -128,21 +150,21 @@ def _sidebar_filters(df_all, show):
     """Render the shared filters (Analytics pages only). Assumes the caller is
     already inside the sidebar context, so the block can sit between the two
     nav groups. When `show` is False (Utilities pages) it renders nothing and
-    returns defaults. Returns (dark, metric, apply_excl, year_sel).
+    returns defaults. Returns (dark, metric, apply_excl, range_sel).
     """
     if not show:
-        return False, "Plays", True, "All years"
+        return False, "Plays", True, "All time"
     st.divider()
     st.markdown("**Filters**")
     years = sorted(df_all['year'].dropna().unique().tolist(), reverse=True)
-    year_sel = st.selectbox("Year", ["All years"] + [str(y) for y in years])
+    range_sel = st.selectbox("Date range", _RANGE_PRESETS + [str(y) for y in years])
     metric = st.radio("Rank by", ["Plays", "Minutes"], horizontal=True)
     apply_excl = st.toggle(
         "Remove kid streams?", value=True,
         help="Filter out the artists/years configured under Settings → "
              "Artist exclusions (e.g. shared-account years).")
     dark = st.toggle("Dark charts", value=False)
-    return dark, metric, apply_excl, year_sel
+    return dark, metric, apply_excl, range_sel
 
 
 def _sidebar_data(df_all):
@@ -238,7 +260,7 @@ def main():
         st.markdown("**Analytics**")
         for p in analytics:
             st.page_link(p)
-        dark, metric, apply_excl, year_sel = _sidebar_filters(df_all, is_analytics)
+        dark, metric, apply_excl, range_sel = _sidebar_filters(df_all, is_analytics)
         st.divider()
         st.markdown("**Utilities**")
         for p in utilities:
@@ -254,7 +276,7 @@ def main():
     n_excluded = len(df_all) - len(df)
 
     value_col, value_label = metric_columns(metric)
-    view = df if year_sel == "All years" else df[df['year'] == int(year_sel)]
+    view = _apply_range(df, range_sel)
     ctx.update(df=df, view=view, value_col=value_col, value_label=value_label)
 
     st.title("🎵 spotify-stats")
@@ -414,15 +436,11 @@ def render_wrapped(df):
     render_alltime(df)
     st.divider()
     st.subheader("Wrapped")
-    window = st.selectbox("Window", ["Last 30 days", "All-time"] +
+    # "Last 30 days" first so it stays the default (index 0) — Wrapped's
+    # traditional default, unlike the sidebar filter which defaults to all-time.
+    window = st.selectbox("Window", ["Last 30 days", "Last 7 days", "This month", "All time"] +
                           [str(y) for y in sorted(df['year'].dropna().unique(), reverse=True)])
-    if window == "Last 30 days":
-        cutoff = df['ts'].max() - pd.Timedelta(days=30)
-        w = df[df['ts'] >= cutoff]
-    elif window == "All-time":
-        w = df
-    else:
-        w = df[df['year'] == int(window)]
+    w = _apply_range(df, window)
 
     if w.empty:
         st.info("No plays in this window.")
