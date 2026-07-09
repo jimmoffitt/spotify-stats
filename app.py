@@ -179,14 +179,21 @@ def _sidebar_data(df_all):
     what), how current the sync is, plus a one-click Sync. Shown on every
     page so updating is always at hand."""
     st.markdown("**Data**")
+    latest = df_all.loc[df_all['ts'].idxmax()]
+    st.caption(f"Latest play: {latest['ts'].strftime('%Y-%m-%d %H:%M UTC')}")
+    st.caption(f"🎵 {latest['track_name']} — {latest['artist_name']}")
+
+    if config.DEMO_MODE:
+        # Read-only demo build: bundled sanitized dataset, no Spotify
+        # credentials on the host, so live sync is unavailable by design.
+        st.caption("Demo mode — read-only sample dataset; live sync is disabled.")
+        return
+
     # A sync just finished on the previous run — surface it now (post-rerun).
     done = st.session_state.pop('_sync_msg', None)
     if done:
         st.toast(done, icon="✅")
 
-    latest = df_all.loc[df_all['ts'].idxmax()]
-    st.caption(f"Latest play: {latest['ts'].strftime('%Y-%m-%d %H:%M UTC')}")
-    st.caption(f"🎵 {latest['track_name']} — {latest['artist_name']}")
     at = run_pipeline._read_last_sync().get('last_sync_at')
     if at:
         hrs = (pd.Timestamp.now(tz='UTC') - pd.Timestamp(at)).total_seconds() / 3600
@@ -681,16 +688,22 @@ def render_artist_filters(df_all):
 
 def render_settings(df):
     st.subheader("Settings")
+    if config.DEMO_MODE:
+        st.info("Demo mode — read-only sample dataset. Live sync is disabled "
+                 "on this host; run the app locally with your own Spotify "
+                 "export to sync your own history.")
     settings = proc.load_settings()
     last = run_pipeline._read_last_sync()
     st.write("**Data status**")
     st.write(f"- Plays loaded: {len(df):,}")
     st.write(f"- Date range: {df['ts'].min().date()} → {df['ts'].max().date()}")
-    st.write(f"- Last sync: {last.get('last_sync_at', 'never')} "
-             f"(+{last.get('last_new', 0)} new)")
-    st.write(f"- Sync authorized: {os.path.exists(config.TOKEN_FILE)}")
-    st.caption("Use the sidebar **🔄 Sync now** to fetch recent plays, and "
-               "**🚫 Artist filters** to choose which artists to exclude.")
+    if not config.DEMO_MODE:
+        st.write(f"- Last sync: {last.get('last_sync_at', 'never')} "
+                 f"(+{last.get('last_new', 0)} new)")
+        st.write(f"- Sync authorized: {os.path.exists(config.TOKEN_FILE)}")
+    st.caption("Use the sidebar **🚫 Artist filters** to choose which artists "
+               "to exclude." + ("" if config.DEMO_MODE else
+                                 " Use **🔄 Sync now** to fetch recent plays."))
 
     st.write("**Preferences**")
     st.write(f"- Timezone: {settings.get('timezone') or 'system default'}")

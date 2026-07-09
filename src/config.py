@@ -83,7 +83,29 @@ INCIDENTAL_PLAY_MS = 30_000  # ~30 seconds
 # deliberately exclude Streaming_History_Video_*.json.
 GDPR_GLOB = 'Streaming_History_Audio_*.json'
 
-# 6. Defaults used when settings.json doesn't exist yet
+# 6. Demo mode — read-only deploy backed by the sanitized dataset that
+# make_demo_data.py writes to data/demo/ (the only play data tracked in git;
+# the real archive/cache/processed files are gitignored). Enabled explicitly
+# via SPOTIFY_STATS_DEMO=1, or implicitly on a fresh clone where the real
+# processed parquet is absent but the demo dataset is present (e.g. Streamlit
+# Community Cloud — no secrets or env config needed). The app hides the Sync
+# button in this mode; runtime writes (settings, exclusions, groups) land in
+# data/demo/, which is gitignored apart from the tracked demo dataset itself.
+DEMO_DIR = os.path.join(DATA_DIR, 'demo')
+DEMO_PLAYS_FILE = os.path.join(DEMO_DIR, 'plays.parquet')
+DEMO_MODE = (
+    os.getenv('SPOTIFY_STATS_DEMO', '').strip().lower() in ('1', 'true', 'yes')
+    or (not os.path.exists(PLAYS_FILE) and os.path.exists(DEMO_PLAYS_FILE))
+)
+if DEMO_MODE:
+    PLAYS_FILE = DEMO_PLAYS_FILE
+    SETTINGS_FILE = os.path.join(DEMO_DIR, 'settings.json')
+    EXCLUSIONS_FILE = os.path.join(DEMO_DIR, 'exclusions.json')
+    GROUPS_FILE = os.path.join(DEMO_DIR, 'groups.json')
+    LAST_SYNC_FILE = os.path.join(DEMO_DIR, 'last_sync.json')
+    os.makedirs(DEMO_DIR, exist_ok=True)
+
+# 7. Defaults used when settings.json doesn't exist yet
 DEFAULT_SETTINGS = {
     'timezone': None,                 # None = fall back to system timezone on first run
     'full_listen_threshold': 0.80,    # ms_played > threshold * duration_ms => full_listen

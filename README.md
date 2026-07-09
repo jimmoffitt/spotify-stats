@@ -6,6 +6,10 @@ Spotify Wrapped leaves out: how your taste shifts year over year, which artists,
 albums, and decades dominate, when you actually listen, and deep-dives on any
 band or group of bands.
 
+**🚀 Live demo: [_add your Streamlit Community Cloud URL here after deploying_](#deploying-a-read-only-demo)** —
+a read-only build with a sanitized copy of the real dataset (see
+[How the demo works](#how-the-demo-works)).
+
 ![spotify-stats — the Rankings view](docs/screenshots/app-ui.png)
 
 A grouped sidebar navigates the views; shared filters (year, plays-vs-minutes,
@@ -196,6 +200,7 @@ python run_pipeline.py --sync        # incremental: fetch recent plays, dedupe, 
 python run_pipeline.py --enrich      # re-run enrichment + rebuild (add --force to refetch)
 python run_pipeline.py --status      # last sync time, total plays, gap risk
 python -m streamlit run app.py       # launch the dashboard
+python make_demo_data.py             # rebuild the sanitized data/demo/plays.parquet
 
 # dev tool: top artists per year -> CSV / Markdown, no UI
 python export_top_artists.py --help
@@ -206,12 +211,15 @@ python export_top_artists.py --help
 ```
 app.py                  # Streamlit dashboard (sidebar nav + all views)
 run_pipeline.py         # CLI: --bootstrap / --sync / --enrich / --status
+make_demo_data.py       # dev tool: sanitize plays.parquet → data/demo/ for the public demo
 export_top_artists.py   # dev tool: top-N artists per year → CSV / Markdown
 gen_screenshots.py      # dev tool: render bare Plotly figures → docs/screenshots/
 gen_guide_screenshots.py# dev tool: full-UI screenshots via Playwright → docs/screenshots/guide/
 scripts/                # macOS LaunchAgent + wrapper for hourly auto-sync
+.streamlit/
+  config.toml           # Spotify-green theme (applies locally and when deployed)
 src/
-  config.py             # paths, constants, OAuth config
+  config.py             # paths, constants, OAuth config, DEMO_MODE
   fetch_data.py         # Spotify OAuth/refresh, recently-played, GDPR loader
   enrich_data.py        # track + artist metadata enrichment (Spotify API)
   process_data.py       # DataFrame build, aggregations, exclusions, groups
@@ -220,7 +228,7 @@ docs/
   USER_GUIDE.md         # full walkthrough of the dashboard
   HOSTED_USER_GUIDE.md  # draft design for a hosted, bring-your-own-history mode
   screenshots/          # README + guide images (committed)
-data/                   # local data (gitignored)
+data/                   # local data (gitignored, except data/demo/plays.parquet)
 ```
 
 ## Data retrieval & storage
@@ -259,6 +267,7 @@ credentials never get committed.
 | `data/settings.json` | Timezone, full-listen threshold | You | No |
 | `data/spotify_tokens.json` | User OAuth tokens (sync only) | `setup_tokens` | No |
 | `.local.env` | `SPOTIFY_CLIENT_ID` / `SECRET` | You | No |
+| `data/demo/plays.parquet` | Sanitized copy for the public demo | `make_demo_data.py` | **Yes** |
 
 Enrichment caches are written once and reused — tracks/artists are never
 re-fetched unless the cache is deleted, keeping repeat runs fast and within API
@@ -295,11 +304,58 @@ command** — your laptop. The browser is just the UI. A few consequences:
   views of data you built locally.
 
 In short: do the data work locally (export → `run_pipeline.py`), and treat any
-browser/hosted instance as a viewer of those locally-built files.
+browser/hosted instance as a viewer of those locally-built files — **unless**
+you use the demo mode described below, which is built specifically to be
+safe to publish.
 
 > A **multi-user, bring-your-own-history** hosted mode (each visitor uploads
 > their own export, processed per session) is sketched as a design doc in
 > [`docs/HOSTED_USER_GUIDE.md`](docs/HOSTED_USER_GUIDE.md) — not yet implemented.
+
+### Deploying a read-only demo
+
+The app ships a **demo mode** — a public, credential-free deploy backed by a
+sanitized copy of the real dataset — for exactly the "share this without
+exposing your private history" case above.
+
+1. **Build the sanitized dataset once** (and again after any future sync you
+   want reflected in the demo):
+   ```bash
+   python make_demo_data.py
+   ```
+   This writes `data/demo/plays.parquet` and prints what it kept. Review the
+   summary, then commit that one file — it's the only play data tracked in git.
+2. **Push to GitHub**, then point [share.streamlit.io](https://share.streamlit.io)
+   at this repo, branch `main`, main file `app.py`. No secrets or environment
+   variables are required — demo mode enables itself (see below).
+3. The app redeploys automatically on every push to `main`.
+
+### How the demo works
+
+**Sanitized dataset.** The real processed play log (`data/processed/plays.parquet`)
+is gitignored — it's built locally from your GDPR export and Spotify API
+enrichment. `make_demo_data.py` copies it to a committable
+`data/demo/plays.parquet`, whitelisting only the columns the app reads.
+Unlike a GPS/heart-rate activity archive, there's no location or biometric data
+to strip; the whitelist exists mainly so a future column added to
+`build_plays_df()` doesn't silently ride along without a deliberate decision.
+
+**Automatic demo mode.** `DEMO_MODE` in `src/config.py` turns on when
+`SPOTIFY_STATS_DEMO=1` is set, or automatically when the real processed
+parquet is absent but the demo dataset is present — which is exactly the
+state of a fresh clone or a Streamlit Community Cloud deploy, since `data/`
+(other than `data/demo/`) is gitignored. In demo mode, `PLAYS_FILE`,
+`SETTINGS_FILE`, `EXCLUSIONS_FILE`, `GROUPS_FILE`, and `LAST_SYNC_FILE` all
+redirect to `data/demo/`, the sidebar's **🔄 Sync now** button is replaced
+with a read-only notice, and any in-session edits (artist filters, band
+groups) land in `data/demo/`, where they're gitignored apart from the tracked
+`plays.parquet`. Locally, with your real processed data present, nothing
+changes.
+
+**No enrichment needed at demo runtime.** Because the committed dataset is
+already the fully-enriched processed frame (genres, release years, album IDs
+included), the demo needs zero Spotify API calls and zero credentials — it's
+a static file the app loads and filters, same as any other run.
 
 ## Contributors
 
