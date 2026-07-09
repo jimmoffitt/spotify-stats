@@ -147,37 +147,46 @@ def _df_to_exclusions(edited):
 
 
 def _sidebar_filters(df_all, show):
-    """Render the shared filters (Analytics pages only). Assumes the caller is
-    already inside the sidebar context, so the block can sit between the two
-    nav groups. When `show` is False (Utilities pages) it renders nothing and
-    returns defaults. Returns (dark, metric, apply_excl, range_sel).
+    """Render the Analytics-only filters (Date range, Rank by). Assumes the
+    caller is already inside the sidebar context, so the block can sit
+    between the two nav groups. When `show` is False (Tools & settings pages)
+    it renders nothing and returns defaults. Returns (metric, range_sel).
     """
     if not show:
-        return False, "Plays", True, "All time"
+        return "Plays", "All time"
     st.divider()
     st.markdown("**Filters**")
     years = sorted(df_all['year'].dropna().unique().tolist(), reverse=True)
     range_sel = st.selectbox("Date range", _RANGE_PRESETS + [str(y) for y in years])
     metric = st.radio("Rank by", ["Plays", "Minutes"], horizontal=True)
+    return metric, range_sel
+
+
+def _sidebar_options():
+    """Global display/data options — always visible (not just on Analytics
+    pages), since kid-stream exclusion and dark charts both affect every page,
+    not only the Analytics tabs. Returns (apply_excl, dark)."""
     apply_excl = st.toggle(
         "Remove kid streams?", value=True,
-        help="Filter out the artists/years configured under Settings → "
-             "Artist exclusions (e.g. shared-account years).")
+        help="Filter out the artists/years configured under Artist filters "
+             "(e.g. shared-account years).")
     dark = st.toggle("Dark charts", value=False)
-    return dark, metric, apply_excl, range_sel
+    return apply_excl, dark
 
 
 def _sidebar_data(df_all):
-    """Compact data-freshness footer in the sidebar: how current the data is,
-    plus a one-click Sync. Shown on every page so updating is always at hand."""
-    st.divider()
+    """Data-freshness section in the sidebar: the most recent play (when,
+    what), how current the sync is, plus a one-click Sync. Shown on every
+    page so updating is always at hand."""
     st.markdown("**Data**")
     # A sync just finished on the previous run — surface it now (post-rerun).
     done = st.session_state.pop('_sync_msg', None)
     if done:
         st.toast(done, icon="✅")
 
-    st.caption(f"Latest play: {df_all['ts'].max().date()}")
+    latest = df_all.loc[df_all['ts'].idxmax()]
+    st.caption(f"Latest play: {latest['ts'].strftime('%Y-%m-%d %H:%M UTC')}")
+    st.caption(f"🎵 {latest['track_name']} — {latest['artist_name']}")
     at = run_pipeline._read_last_sync().get('last_sync_at')
     if at:
         hrs = (pd.Timestamp.now(tz='UTC') - pd.Timestamp(at)).total_seconds() / 3600
@@ -241,7 +250,7 @@ def main():
         st.Page(_patterns, title="Patterns", icon="🕐", url_path="patterns"),
         st.Page(_decades,  title="Decades",  icon="📅", url_path="decades"),
     ]
-    utilities = [
+    tools = [
         st.Page(_artist_filters, title="Artist filters", icon="🚫",
                 url_path="artist-filters"),
         st.Page(_explore,  title="Explore",  icon="🔍", url_path="explore"),
@@ -251,8 +260,8 @@ def main():
 
     # Route via st.navigation (so the selected page survives reruns — no more
     # snap-back), but hide its built-in nav so we can build the sidebar by hand
-    # and slot the Filters between the Analytics and Utilities groups.
-    pg = st.navigation({"Analytics": analytics, "Utilities": utilities},
+    # and slot the Data section and options between the two nav groups.
+    pg = st.navigation({"Analytics": analytics, "Tools & settings": tools},
                        position="hidden")
     is_analytics = pg.url_path in {p.url_path for p in analytics}
 
@@ -260,12 +269,14 @@ def main():
         st.markdown("**Analytics**")
         for p in analytics:
             st.page_link(p)
-        dark, metric, apply_excl, range_sel = _sidebar_filters(df_all, is_analytics)
+        metric, range_sel = _sidebar_filters(df_all, is_analytics)
         st.divider()
-        st.markdown("**Utilities**")
-        for p in utilities:
-            st.page_link(p)
         _sidebar_data(df_all)
+        st.divider()
+        st.markdown("**Tools & settings**")
+        for p in tools:
+            st.page_link(p)
+        apply_excl, dark = _sidebar_options()
     charts.set_theme(dark)
 
     excl_mtime = (os.path.getmtime(config.EXCLUSIONS_FILE)
@@ -622,7 +633,7 @@ def render_export(df):
 
 
 def render_artist_filters(df_all):
-    """The exclusions editor — a primary concept, so it's its own Utilities page
+    """The exclusions editor — a primary concept, so it's its own Tools & settings page
     (not buried in Settings). Powers the sidebar 'Remove kid streams?' toggle."""
     st.subheader("🚫 Artist filters")
     st.write("Drop plays that weren't really yours — e.g. a shared-account "
