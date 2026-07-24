@@ -458,7 +458,10 @@ def main():
         # Cloud, which warns on the deprecated call) and fall back otherwise,
         # so this doesn't break on older local installs.
         if hasattr(st, 'iframe'):
-            st.iframe(_autoclose_js, height=0)
+            # st.iframe's height must be a positive int (0 raises
+            # StreamlitInvalidHeightError) — 1px is the smallest valid,
+            # effectively-invisible size for this headless JS injection.
+            st.iframe(_autoclose_js, height=1)
         else:
             components.html(_autoclose_js, height=0, scrolling=False)
     charts.set_theme(dark)
