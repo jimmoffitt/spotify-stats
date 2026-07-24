@@ -25,12 +25,19 @@ your history, not just the last twelve months.
 
 - **🗓️ Wrapped** — an all-time snapshot (lifetime totals plus records: busiest
   day, longest streak, all-time #1s) and a Wrapped-style recap for any window.
-- **🏆 Rankings** — your top artists for every year side by side, newest first,
-  ranked by play count or minutes.
-- **🎸 Artists / 🎵 Tracks / 💿 Albums / 🎼 Genres / 📅 Decades** — all-time and
-  per-year tops, by plays or minutes.
-- **🎤 Bands** — single-artist deep-dives (rank among your artists, peak year,
-  listening clock) and saveable **groups** of bands with combined summaries.
+- **🏆 Annual favorite bands** — your top artists for every year side by side,
+  newest first, ranked by play count or minutes.
+- **🎸 Artists / 🎵 Tracks / 💿 Albums / 🎼 Genres** — all-time and per-year
+  tops, by plays or minutes; Genres also groups the hundreds of Spotify
+  micro-genres into broad families in a treemap.
+- **📅 Decades** — listening by release decade, plus top-10 bands and top-10
+  songs for every decade back to the 1960s.
+- **🎤 Groups of bands dude** — single-artist deep-dives (rank among your
+  artists, peak year, listening clock) and saveable **groups** of bands with
+  combined summaries.
+- **🔥 Binges** — songs and bands that hit hard for a week or two then faded,
+  plus a **Concert warm-up** table for the spike-then-crash pattern of hyping
+  up for a show.
 - **🕐 Patterns** — an hour-of-day × day-of-week listening heatmap.
 - **🔍 Explore / 📤 Export** — full-text search of the raw play log, and CSV exports.
 - **🚫 Artist filters** — drop shared-account streams (e.g. a kid's listening)
