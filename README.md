@@ -375,3 +375,7 @@ architecture, and feature decisions are made collaboratively in that loop.
 Modeled after the [strava-stats](https://github.com/jimmoffitt/strava-stats)
 dashboard, which established the `fetch_data` / `process_data` / `charts` /
 Streamlit-tabs pattern reused here.
+
+## License
+
+[MIT](LICENSE) — do what you like with it.
