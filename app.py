@@ -46,6 +46,18 @@ def filtered_plays_cached(path, mtime, excl_mtime):
     return proc.apply_exclusions(df_all, proc.load_exclusions())
 
 
+@st.cache_data
+def alltime_stats_cached(path, mtime, excl_mtime, apply_excl):
+    """proc.alltime_stats() is the priciest call on the Wrapped page (several
+    full-archive groupbys). Cache it the same way as filtered_plays_cached —
+    keyed on cheap primitives rather than the DataFrame itself — so it's not
+    recomputed on every widget interaction while Wrapped is open, only when
+    the underlying data or exclusion filter actually changes."""
+    df = (filtered_plays_cached(path, mtime, excl_mtime) if apply_excl
+          else load_plays_cached(path, mtime))
+    return proc.alltime_stats(df)
+
+
 def metric_columns(metric):
     """Map the sidebar metric toggle to (column, human label)."""
     return ('minutes', 'Minutes') if metric == 'Minutes' else ('plays', 'Plays')
@@ -326,7 +338,7 @@ def main():
     def _albums():   render_albums(ctx['view'], ctx['value_col'], ctx['value_label'])
     def _genres():   render_genres(ctx['view'], ctx['value_col'], ctx['value_label'])
     def _decades():  render_decades(ctx['view'], ctx['value_col'], ctx['value_label'])
-    def _wrapped():  render_wrapped(ctx['df'])
+    def _wrapped():  render_wrapped(ctx['df'], ctx['alltime'])
     def _patterns(): render_patterns(ctx['view'])
     def _bands():    render_bands(ctx['df'])
     def _artist_filters(): render_artist_filters(df_all)
@@ -475,7 +487,11 @@ def main():
 
     value_col, value_label = metric_columns(metric)
     view = _apply_range(df, range_sel)
-    ctx.update(df=df, view=view, value_col=value_col, value_label=value_label)
+    alltime = alltime_stats_cached(config.PLAYS_FILE,
+                                   os.path.getmtime(config.PLAYS_FILE),
+                                   excl_mtime, apply_excl)
+    ctx.update(df=df, view=view, value_col=value_col, value_label=value_label,
+               alltime=alltime)
 
     st.title("🎵 sonic-stats")
     if is_analytics:
@@ -584,11 +600,12 @@ def _fmt_hour(h):
     return f"{h % 12 or 12}{'am' if h < 12 else 'pm'}"
 
 
-def render_alltime(df):
+def render_alltime(s):
     """All-time totals + records (all years, but honoring the kid-stream
-    exclusion toggle), shown atop the Wrapped tab."""
+    exclusion toggle), shown atop the Wrapped tab. `s` is the
+    alltime_stats_cached() dict — computed once in main(), not here, so it
+    isn't recomputed on every widget interaction while Wrapped is open."""
     st.subheader("🏅 All-time")
-    s = proc.alltime_stats(df)
     if not s:
         st.info("No data yet.")
         return
@@ -630,8 +647,8 @@ def render_alltime(df):
     col2.markdown("\n\n".join(right))
 
 
-def render_wrapped(df):
-    render_alltime(df)
+def render_wrapped(df, alltime):
+    render_alltime(alltime)
     st.divider()
     st.subheader("Wrapped")
     # "Last 30 days" first so it stays the default (index 0) — Wrapped's
