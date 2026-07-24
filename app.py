@@ -431,8 +431,7 @@ def main():
         # whole screen with no obvious next step. Auto-collapse it after
         # navigation, matching typical mobile nav-drawer behavior; desktop is
         # left alone since the sidebar coexists with the content there.
-        components.html(
-            """
+        _autoclose_js = """
             <script>
             (function() {
                 if (window.parent.__sonicSidebarAutoCloseAttached) return;
@@ -452,10 +451,16 @@ def main():
                 }, true);
             })();
             </script>
-            """,
-            height=0,
-            scrolling=False,
-        )
+            """
+        # st.iframe (raw-HTML form) is components.v1.html's replacement, but
+        # it only exists on Streamlit >=1.51ish — newer than what's pinned in
+        # requirements.txt. Prefer it when present (e.g. Streamlit Community
+        # Cloud, which warns on the deprecated call) and fall back otherwise,
+        # so this doesn't break on older local installs.
+        if hasattr(st, 'iframe'):
+            st.iframe(_autoclose_js, height=0)
+        else:
+            components.html(_autoclose_js, height=0, scrolling=False)
     charts.set_theme(dark)
 
     excl_mtime = (os.path.getmtime(config.EXCLUSIONS_FILE)
