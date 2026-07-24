@@ -338,7 +338,13 @@ def main():
     def _albums():   render_albums(ctx['view'], ctx['value_col'], ctx['value_label'])
     def _genres():   render_genres(ctx['view'], ctx['value_col'], ctx['value_label'])
     def _decades():  render_decades(ctx['view'], ctx['value_col'], ctx['value_label'])
-    def _wrapped():  render_wrapped(ctx['df'], ctx['alltime'])
+    def _wrapped():
+        # Computed here, not eagerly in main(), so visiting any other page
+        # doesn't pay for alltime_stats_cached() — only Wrapped needs it.
+        alltime = alltime_stats_cached(config.PLAYS_FILE,
+                                       os.path.getmtime(config.PLAYS_FILE),
+                                       ctx['excl_mtime'], ctx['apply_excl'])
+        render_wrapped(ctx['df'], alltime)
     def _patterns(): render_patterns(ctx['view'])
     def _bands():    render_bands(ctx['df'])
     def _artist_filters(): render_artist_filters(df_all)
@@ -487,11 +493,8 @@ def main():
 
     value_col, value_label = metric_columns(metric)
     view = _apply_range(df, range_sel)
-    alltime = alltime_stats_cached(config.PLAYS_FILE,
-                                   os.path.getmtime(config.PLAYS_FILE),
-                                   excl_mtime, apply_excl)
     ctx.update(df=df, view=view, value_col=value_col, value_label=value_label,
-               alltime=alltime)
+               excl_mtime=excl_mtime, apply_excl=apply_excl)
 
     st.title("🎵 sonic-stats")
     if is_analytics:
