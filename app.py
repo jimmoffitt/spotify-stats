@@ -20,6 +20,7 @@ import glob
 import os
 import re
 import zipfile
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
@@ -257,33 +258,33 @@ def _extract_gdpr_zip(uploaded_file):
     return written
 
 
-def render_onboarding():
-    """First-run screen, shown until data/processed/plays.parquet exists.
-    Walks the user through the one part of setup that can't be automated —
-    Spotify's own export request — then takes their archive straight from
-    the browser (no data/raw/ file-copying, no terminal) and builds the
-    dashboard in place."""
-    st.title("🎵 sonic-stats")
-    st.markdown("### Let's get your listening history")
-
-    with st.popover("❓ How do I get my Spotify data?"):
-        st.markdown(
-            "1. Go to Spotify **[Account → Privacy settings]"
-            "(https://www.spotify.com/account/privacy/)**.\n"
-            "2. Under **Download your data**, check **Extended streaming "
-            "history** — the default \"Account data\" option is a smaller "
-            "summary and isn't enough.\n"
-            "3. Click **Request data** and confirm via the email Spotify "
-            "sends.\n"
-            "4. **Wait.** It can take a few hours to ~30 days (usually a "
-            "few days). Spotify emails a download link when it's ready.\n"
-            "5. Download the **.zip** and upload it below — no need to "
-            "unzip it first."
-        )
+def _render_import_flow(key_prefix, button_label="Build my dashboard",
+                        show_popover=True):
+    """Upload-a-zip -> extract -> bootstrap flow. Shared by the first-run
+    onboarding screen and the Settings "re-import" section (below) so
+    getting a fresh export in — first time or a re-download months later —
+    never requires data/raw/ file-copying or a terminal.
+    `key_prefix` keeps widget keys distinct between the two call sites."""
+    if show_popover:
+        with st.popover("❓ How do I get my Spotify data?"):
+            st.markdown(
+                "1. Go to Spotify **[Account → Privacy settings]"
+                "(https://www.spotify.com/account/privacy/)**.\n"
+                "2. Under **Download your data**, check **Extended streaming "
+                "history** — the default \"Account data\" option is a smaller "
+                "summary and isn't enough.\n"
+                "3. Click **Request data** and confirm via the email Spotify "
+                "sends.\n"
+                "4. **Wait.** It can take a few hours to ~30 days (usually a "
+                "few days). Spotify emails a download link when it's ready.\n"
+                "5. Download the **.zip** and upload it below — no need to "
+                "unzip it first."
+            )
 
     uploaded = st.file_uploader(
         "Upload your Spotify export (.zip)", type="zip",
-        help="The zip file Spotify emailed you a link to — drop it in as-is.")
+        help="The zip file Spotify emailed you a link to — drop it in as-is.",
+        key=f"{key_prefix}_uploader")
 
     raw_ready = bool(glob.glob(os.path.join(config.RAW_DIR, config.GDPR_GLOB)))
     if uploaded is not None:
@@ -299,7 +300,8 @@ def render_onboarding():
         st.caption("Waiting on your export upload before this dashboard can build.")
         return
 
-    if st.button("Build my dashboard", type="primary", width='stretch'):
+    if st.button(button_label, type="primary", width='stretch',
+                 key=f"{key_prefix}_build"):
         try:
             config.validate_config()
         except ValueError:
@@ -317,10 +319,30 @@ def render_onboarding():
             except Exception as e:
                 st.error(f"Bootstrap failed: {e}")
                 return
+        st.cache_data.clear()
         st.rerun()
 
 
+def render_onboarding():
+    """First-run screen, shown until data/processed/plays.parquet exists.
+    Walks the user through the one part of setup that can't be automated —
+    Spotify's own export request — then takes their archive straight from
+    the browser (no data/raw/ file-copying, no terminal) and builds the
+    dashboard in place."""
+    st.title("🎵 sonic-stats")
+    st.markdown("### Let's get your listening history")
+    _render_import_flow(key_prefix="onboard")
+
+
 def main():
+    # Streamlit's default top padding (96px) leaves room well beyond the
+    # 60px, opaquely-white floating header bar — trim the excess without
+    # tucking content under the header itself.
+    st.markdown(
+        "<style>[data-testid='stMainBlockContainer'] { padding-top: 4.5rem; }</style>",
+        unsafe_allow_html=True,
+    )
+
     if not os.path.exists(config.PLAYS_FILE):
         render_onboarding()
         return
@@ -903,9 +925,12 @@ def render_settings(df):
                  "export to sync your own history.")
     settings = proc.load_settings()
     last = run_pipeline._read_last_sync()
+    built = datetime.fromtimestamp(os.path.getmtime(config.PLAYS_FILE))
     st.write("**Data status**")
     st.write(f"- Plays loaded: {len(df):,}")
     st.write(f"- Date range: {df['ts'].min().date()} → {df['ts'].max().date()}")
+    st.write(f"- Archive last built: {built.strftime('%Y-%m-%d %H:%M')} "
+             "— from your uploaded Spotify export, plus any syncs since.")
     if not config.DEMO_MODE:
         st.write(f"- Last sync: {last.get('last_sync_at', 'never')} "
                  f"(+{last.get('last_new', 0)} new)")
@@ -917,6 +942,15 @@ def render_settings(df):
     st.write("**Preferences**")
     st.write(f"- Timezone: {settings.get('timezone') or 'system default'}")
     st.write(f"- Full-listen threshold: {settings.get('full_listen_threshold')}")
+
+    if not config.DEMO_MODE:
+        with st.expander("📥 Re-import a fresh archive"):
+            st.caption(
+                "Requested a new export from Spotify since you set this up? "
+                "Upload the new zip here to rebuild the dashboard from it — "
+                "same one-time flow as the first-run screen, no terminal "
+                "needed.")
+            _render_import_flow(key_prefix="settings", button_label="Rebuild")
 
 
 if __name__ == "__main__":
