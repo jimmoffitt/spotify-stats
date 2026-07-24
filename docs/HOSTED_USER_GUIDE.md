@@ -1,11 +1,11 @@
-# spotify-stats — Getting Started With Your Own History
+# sonic-stats — Getting Started With Your Own History
 
 > **Status: DRAFT / design doc.** This describes the *planned* hosted experience
 > where anyone can explore their own Spotify history — it is the spec we'll build
 > to, not how the app behaves today. The companion `USER_GUIDE.md` covers running
 > the app locally as a developer.
 
-Welcome! **spotify-stats** turns your *entire* Spotify listening history — not
+Welcome! **sonic-stats** turns your *entire* Spotify listening history — not
 just the last year — into an interactive dashboard: your all-time favorites,
 who topped your charts each year, your listening patterns, and more.
 

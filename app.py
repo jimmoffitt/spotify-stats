@@ -24,7 +24,7 @@ import streamlit as st
 import run_pipeline
 from src import charts, config, process_data as proc
 
-st.set_page_config(page_title="spotify-stats", page_icon="🎵", layout="wide",
+st.set_page_config(page_title="sonic-stats", page_icon="🎵", layout="wide",
                    initial_sidebar_state="expanded")
 
 
@@ -220,7 +220,7 @@ def _sidebar_data(df_all):
 
 def main():
     if not os.path.exists(config.PLAYS_FILE):
-        st.title("🎵 spotify-stats")
+        st.title("🎵 sonic-stats")
         st.info("No processed data yet. Drop your GDPR export into `data/raw/` "
                 "and run `python run_pipeline.py`.")
         return
@@ -297,7 +297,7 @@ def main():
     view = _apply_range(df, range_sel)
     ctx.update(df=df, view=view, value_col=value_col, value_label=value_label)
 
-    st.title("🎵 spotify-stats")
+    st.title("🎵 sonic-stats")
     if is_analytics:
         caption = (f"{len(view):,} plays · {view['minutes_played'].sum()/60:,.0f} "
                    f"hours · {view['artist_name'].nunique():,} artists")

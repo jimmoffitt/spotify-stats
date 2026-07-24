@@ -1,4 +1,4 @@
-# spotify-stats
+# sonic-stats
 
 A personal Spotify listening-history dashboard built with [Streamlit](https://streamlit.io/).
 It turns your Spotify **Extended Streaming History** export into the views that
@@ -10,7 +10,12 @@ band or group of bands.
 a read-only build with a sanitized copy of the real dataset (see
 [How the demo works](#how-the-demo-works)).
 
-![spotify-stats — the Rankings view](docs/screenshots/app-ui.png)
+> **Not affiliated with, endorsed by, or sponsored by Spotify.** This is an
+> independent, unofficial project built against Spotify's GDPR data export and
+> public Web API (for enrichment only). "Spotify" and the Spotify logo are
+> trademarks of Spotify AB.
+
+![sonic-stats — the Rankings view](docs/screenshots/app-ui.png)
 
 A grouped sidebar navigates the views; shared filters (year, plays-vs-minutes,
 kid-stream removal) apply across them; and the whole thing runs on *years* of

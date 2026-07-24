@@ -1,4 +1,4 @@
-# spotify-stats — User's Guide
+# sonic-stats — User's Guide
 
 A personal dashboard for your **entire** Spotify listening history — not just
 the last year. It loads your Extended Streaming History export (and keeps it
@@ -9,7 +9,7 @@ charts, rankings, and summaries.
 
 ## What it does
 
-At a glance, spotify-stats gives you:
+At a glance, sonic-stats gives you:
 
 - **🗓️ Wrapped** — an all-time snapshot (totals + records) plus a Spotify-Wrapped-style
   summary for any window (last 30 days, a single year, or all-time).

@@ -163,7 +163,7 @@ def status():
     if total is None and os.path.exists(config.PLAYS_FILE):
         total = len(process_data.load_plays())
 
-    print("=== spotify-stats status ===")
+    print("=== sonic-stats status ===")
     print(f"  plays.parquet exists : {os.path.exists(config.PLAYS_FILE)}")
     print(f"  total plays          : {total:,}" if total is not None else
           "  total plays          : (run --bootstrap)")
