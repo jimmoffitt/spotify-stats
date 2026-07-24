@@ -20,6 +20,7 @@ import re
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 import run_pipeline
 from src import charts, config, process_data as proc
@@ -273,6 +274,60 @@ def main():
     is_analytics = pg.url_path in {p.url_path for p in analytics}
 
     with st.sidebar:
+        _sidebar_dark = st.context.theme.type == 'dark'
+        _sidebar_bg = '#262730' if _sidebar_dark else '#f0f2f6'
+        # Streamlit's native sidebar open/close buttons default to a ~28px hit
+        # target — fiddly to tap precisely on a phone. Enlarge both toward the
+        # ~44px mobile touch-target guideline; purely cosmetic/hit-area, no
+        # behavior change. The header (holding the close button) also isn't
+        # sticky by default — on a phone, scrolling down through Analytics/
+        # Filters/Data/Tools pushes the close button off the top of the
+        # screen entirely, with no way to close the sidebar without scrolling
+        # back up first. Pin it to the top of the sidebar's own scroll area.
+        st.markdown(
+            f"""
+            <style>
+            [data-testid="stSidebarCollapseButton"] button,
+            [data-testid="stExpandSidebarButton"] {{
+                width: 44px !important;
+                height: 44px !important;
+                padding: 8px !important;
+            }}
+            [data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"],
+            [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] {{
+                font-size: 28px !important;
+            }}
+            [data-testid="stSidebarHeader"] {{
+                position: sticky;
+                top: 0;
+                z-index: 999;
+                background-color: {_sidebar_bg};
+            }}
+            /* Page-link labels default to a single non-wrapping line (e.g.
+               "Artist filters"), which forces the sidebar to stay wide on a
+               phone to avoid clipping it. Let labels wrap to a second line
+               instead, so the sidebar can be narrowed without losing text. */
+            [data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"] {{
+                height: auto !important;
+                min-height: 32px;
+                padding-top: 6px !important;
+                padding-bottom: 6px !important;
+            }}
+            [data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"] > span:last-child {{
+                height: auto !important;
+                overflow: visible !important;
+                white-space: normal !important;
+            }}
+            [data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"] p {{
+                white-space: normal !important;
+                word-break: break-word;
+                height: auto !important;
+                line-height: 1.25;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
         st.markdown("**Analytics**")
         for p in analytics:
             st.page_link(p)
@@ -284,6 +339,36 @@ def main():
         for p in tools:
             st.page_link(p)
         apply_excl, dark = _sidebar_options()
+
+        # Selecting a page link on mobile leaves the sidebar covering the
+        # whole screen with no obvious next step. Auto-collapse it after
+        # navigation, matching typical mobile nav-drawer behavior; desktop is
+        # left alone since the sidebar coexists with the content there.
+        components.html(
+            """
+            <script>
+            (function() {
+                if (window.parent.__sonicSidebarAutoCloseAttached) return;
+                window.parent.__sonicSidebarAutoCloseAttached = true;
+                window.parent.document.addEventListener('click', function(e) {
+                    var link = e.target.closest('[data-testid="stPageLink-NavLink"]');
+                    if (!link) return;
+                    if (window.parent.innerWidth > 768) return;
+                    setTimeout(function() {
+                        var doc = window.parent.document;
+                        var sidebar = doc.querySelector('[data-testid="stSidebar"]');
+                        var btn = doc.querySelector('[data-testid="stSidebarCollapseButton"] button');
+                        if (btn && sidebar && sidebar.getAttribute('aria-expanded') === 'true') {
+                            btn.click();
+                        }
+                    }, 150);
+                }, true);
+            })();
+            </script>
+            """,
+            height=0,
+            scrolling=False,
+        )
     charts.set_theme(dark)
 
     excl_mtime = (os.path.getmtime(config.EXCLUSIONS_FILE)
