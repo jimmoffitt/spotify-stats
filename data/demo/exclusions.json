@@ -28,7 +28,8 @@
     "blackbear": true,
     "Disco Inferno": true,
     "Khalid": {
-      "before": 2019
+      "before": 2019,
+      "keep": 0.14
     },
     "EMA": {
       "before": 2019
