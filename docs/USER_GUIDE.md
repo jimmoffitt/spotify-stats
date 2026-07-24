@@ -61,22 +61,22 @@ SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/callback
 > literal `127.0.0.1`, and register the *identical* string in your app's
 > dashboard under **Redirect URIs**.
 
-### 4. Load your history
-Unzip your export and drop the `Streaming_History_Audio_*.json` files into
-`data/raw/`, then build the dataset (one-time; enriches tracks/artists via the
-Spotify API):
-```bash
-.venv/bin/python run_pipeline.py --bootstrap
-```
-
-### 5. Launch
+### 4. Launch and load your history
 ```bash
 .venv/bin/python -m streamlit run app.py
 ```
-The app opens in your browser on the **Wrapped** page. That's it — everything
-below is the tour.
+On first run, the app opens to a guided screen instead of the dashboard: a
+popover reminds you how to request your export from Spotify if needed, and a
+file picker takes the `.zip` directly — no unzipping or copying files by hand.
+Click **Build my dashboard**; it enriches tracks/artists via the Spotify API
+(one-time, a few minutes) and the **Wrapped** page loads when done. That's it —
+everything below is the tour.
 
-### 6. (Optional) Keep it fresh
+> Prefer the terminal? Drop the unzipped `Streaming_History_Audio_*.json`
+> files into `data/raw/` and run `.venv/bin/python run_pipeline.py --bootstrap`
+> instead of using the upload screen.
+
+### 5. (Optional) Keep it fresh
 To pull plays since your export, authorize once, then sync:
 ```bash
 .venv/bin/python -m src.setup_tokens        # one-time browser auth
@@ -219,7 +219,7 @@ Syncing is a primary action, so it lives in its own block on every page: it
 shows the timestamp (UTC) and track/artist of your **latest play**, how long
 ago you last synced, and a **🔄 Sync now** button that pulls your most recent
 plays from Spotify's recently-played feed (after the one-time authorization in
-*Get started* step 6).
+*Get started* step 5).
 
 ---
 

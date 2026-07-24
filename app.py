@@ -15,8 +15,11 @@ import warnings
 
 warnings.filterwarnings("ignore", message=r"urllib3 v2 only supports OpenSSL")
 
+import fnmatch
+import glob
 import os
 import re
+import zipfile
 
 import pandas as pd
 import streamlit as st
@@ -219,11 +222,95 @@ def _sidebar_data(df_all):
         st.caption("Authorize once in a terminal: `python -m src.setup_tokens`")
 
 
+def _extract_gdpr_zip(uploaded_file):
+    """Pull Streaming_History_Audio_*.json files out of an uploaded Spotify
+    export zip and write them into data/raw/, flattening any folder structure
+    Spotify wraps them in. Returns the filenames written; raises ValueError
+    if the zip contains none (e.g. the smaller "Account data" export, which
+    doesn't include play-by-play history)."""
+    written = []
+    with zipfile.ZipFile(uploaded_file) as zf:
+        for info in zf.infolist():
+            name = os.path.basename(info.filename)
+            if not name or not fnmatch.fnmatch(name, config.GDPR_GLOB):
+                continue
+            with zf.open(info) as src, open(os.path.join(config.RAW_DIR, name), 'wb') as dst:
+                dst.write(src.read())
+            written.append(name)
+    if not written:
+        raise ValueError(
+            f"No '{config.GDPR_GLOB}' files found in that zip. Make sure you "
+            "requested **Extended streaming history** — the smaller \"Account "
+            "data\" export doesn't include play-by-play history.")
+    return written
+
+
+def render_onboarding():
+    """First-run screen, shown until data/processed/plays.parquet exists.
+    Walks the user through the one part of setup that can't be automated —
+    Spotify's own export request — then takes their archive straight from
+    the browser (no data/raw/ file-copying, no terminal) and builds the
+    dashboard in place."""
+    st.title("🎵 sonic-stats")
+    st.markdown("### Let's get your listening history")
+
+    with st.popover("❓ How do I get my Spotify data?"):
+        st.markdown(
+            "1. Go to Spotify **[Account → Privacy settings]"
+            "(https://www.spotify.com/account/privacy/)**.\n"
+            "2. Under **Download your data**, check **Extended streaming "
+            "history** — the default \"Account data\" option is a smaller "
+            "summary and isn't enough.\n"
+            "3. Click **Request data** and confirm via the email Spotify "
+            "sends.\n"
+            "4. **Wait.** It can take a few hours to ~30 days (usually a "
+            "few days). Spotify emails a download link when it's ready.\n"
+            "5. Download the **.zip** and upload it below — no need to "
+            "unzip it first."
+        )
+
+    uploaded = st.file_uploader(
+        "Upload your Spotify export (.zip)", type="zip",
+        help="The zip file Spotify emailed you a link to — drop it in as-is.")
+
+    raw_ready = bool(glob.glob(os.path.join(config.RAW_DIR, config.GDPR_GLOB)))
+    if uploaded is not None:
+        try:
+            written = _extract_gdpr_zip(uploaded)
+        except (zipfile.BadZipFile, ValueError) as e:
+            st.error(str(e))
+            return
+        st.success(f"Found {len(written)} file(s) in your export.")
+        raw_ready = True
+
+    if not raw_ready:
+        st.caption("Waiting on your export upload before this dashboard can build.")
+        return
+
+    if st.button("Build my dashboard", type="primary", width='stretch'):
+        try:
+            config.validate_config()
+        except ValueError:
+            st.error(
+                "Missing Spotify API credentials (`SPOTIFY_CLIENT_ID` / "
+                "`SPOTIFY_CLIENT_SECRET`), needed to enrich tracks with "
+                "genres and release dates. Create a free Spotify app and "
+                "save them to `.local.env` — see the README's *Getting "
+                "started* step 3, then reload this page.")
+            return
+        with st.spinner("Building your dashboard — hundreds of enrichment "
+                         "API calls, usually a few minutes…"):
+            try:
+                run_pipeline.bootstrap()
+            except Exception as e:
+                st.error(f"Bootstrap failed: {e}")
+                return
+        st.rerun()
+
+
 def main():
     if not os.path.exists(config.PLAYS_FILE):
-        st.title("🎵 sonic-stats")
-        st.info("No processed data yet. Drop your GDPR export into `data/raw/` "
-                "and run `python run_pipeline.py`.")
+        render_onboarding()
         return
 
     df_all = load_plays_cached(config.PLAYS_FILE, os.path.getmtime(config.PLAYS_FILE))

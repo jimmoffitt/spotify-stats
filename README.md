@@ -119,40 +119,28 @@ important step, and the one with a wait — start it early.
     arrive (it usually lands in a few days). Spotify emails a download link when
     it's ready.
 
-  When the zip arrives, unzip it. Inside is a folder named **`Spotify Extended
-  Streaming History`** containing files like:
+  When the zip arrives, **leave it zipped** — you'll upload it as-is in the next
+  step. (Nothing in `data/` is ever committed to git.)
 
-  ```
-  Streaming_History_Audio_2016.json
-  Streaming_History_Audio_2017_1.json
-  ...
-  Streaming_History_Video_2024.json      <- ignored (video, not music)
-  ```
+  > Re-importing later: when you request a fresh export down the road, just
+  > upload the new zip in the same first-run screen and rebuild.
 
-  Copy the **`Streaming_History_Audio_*.json`** files into this project's
-  **`data/raw/`** folder. (You can copy the whole folder's contents if it's
-  easier — the loader only reads the `Audio` files and ignores the rest.) Nothing
-  in `data/` is ever committed to git.
-
-  > Re-importing later: when you request a fresh export down the road, just drop
-  > the new `Streaming_History_Audio_*.json` files into `data/raw/` (replacing the
-  > old ones) and re-run the bootstrap in the next step.
-
-**6. Build your data (the "bootstrap").** This loads your history and enriches it.
-It makes hundreds of API calls, so it takes a few minutes:
-
-```bash
-python run_pipeline.py --bootstrap
-```
-
-**7. Open the dashboard:**
+**6. Open the dashboard and upload your export:**
 
 ```bash
 python -m streamlit run app.py
 ```
 
-Your browser opens to the dashboard. **You're done** — step 6 never needs to
-happen again unless you import a fresh full export.
+The app opens to a guided first-run screen: a **"How do I get my Spotify
+data?"** popover walks through step 5 again if you need a reminder, and a
+file picker takes the `.zip` directly — no unzipping or copying files by
+hand. Click **Build my dashboard** and it enriches your history via the
+Spotify API (hundreds of calls, so a few minutes) and loads the dashboard
+when done. **You're done** — this never needs to happen again unless you
+import a fresh full export.
+
+> Prefer the terminal? `python run_pipeline.py --bootstrap` does the same
+> build from files already sitting in `data/raw/` — see *Command reference*.
 
 ## Keeping your data current
 
