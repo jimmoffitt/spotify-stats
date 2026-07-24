@@ -77,6 +77,15 @@ def artist_binges_cached(path, mtime, excl_mtime, apply_excl):
     return proc.artist_binges(df)
 
 
+@st.cache_data
+def concert_warmups_cached(path, mtime, excl_mtime, apply_excl):
+    """Cached the same way as the other Binges tables. Full archive (not
+    date-range-filtered), same rationale as track/artist_binges_cached."""
+    df = (filtered_plays_cached(path, mtime, excl_mtime) if apply_excl
+          else load_plays_cached(path, mtime))
+    return proc.artist_concert_warmups(df)
+
+
 def metric_columns(metric):
     """Map the sidebar metric toggle to (column, human label)."""
     return ('minutes', 'Minutes') if metric == 'Minutes' else ('plays', 'Plays')
@@ -421,7 +430,10 @@ def main():
         artist_peaks = artist_binges_cached(config.PLAYS_FILE,
                                             os.path.getmtime(config.PLAYS_FILE),
                                             ctx['excl_mtime'], ctx['apply_excl'])
-        render_binges(track_peaks, artist_peaks)
+        warmups = concert_warmups_cached(config.PLAYS_FILE,
+                                         os.path.getmtime(config.PLAYS_FILE),
+                                         ctx['excl_mtime'], ctx['apply_excl'])
+        render_binges(track_peaks, artist_peaks, warmups)
     def _artist_filters(): render_artist_filters(df_all)
     def _explore():  render_explore(ctx['df'])
     def _export():   render_export(ctx['df'])
@@ -430,10 +442,10 @@ def main():
     analytics = [
         st.Page(_wrapped,  title="Wrapped",  icon="🗓️", url_path="wrapped", default=True),
         st.Page(_artists,  title="Artists",  icon="🎸", url_path="artists"),
-        st.Page(_rankings, title="Rankings", icon="🏆", url_path="rankings"),
         st.Page(_tracks,   title="Tracks",   icon="🎵", url_path="tracks"),
         st.Page(_albums,   title="Albums",   icon="💿", url_path="albums"),
-        st.Page(_bands,    title="Bands",    icon="🎤", url_path="bands"),
+        st.Page(_rankings, title="Annual favorite bands", icon="🏆", url_path="rankings"),
+        st.Page(_bands,    title="Groups of bands dude", icon="🎤", url_path="bands"),
         st.Page(_genres,   title="Genres",   icon="🎼", url_path="genres"),
         st.Page(_patterns, title="Patterns", icon="🕐", url_path="patterns"),
         st.Page(_binges,   title="Binges",   icon="🔥", url_path="binges"),
@@ -660,14 +672,26 @@ def render_genres(df):
     range_sel, metric = _page_filters(df)
     value_col, value_label = metric_columns(metric)
     view = _apply_range(df, range_sel)
-    st.subheader("Top genres")
-    top = proc.top_genres(view, n=25, metric=value_col)
-    if top.empty:
+    st.subheader("Genre families")
+    st.caption("Spotify's genre tags are hundreds of narrow micro-genres "
+               "('jangle pop', 'power pop', 'dream pop'...) that fragment "
+               "any flat ranking — grouped here into broad families, with "
+               "each family's own top micro-genres nested inside.")
+    tree = proc.genre_group_treemap_data(view, metric=value_col)
+    if tree.empty:
         st.info("No genre data yet — run artist enrichment.")
         return
-    st.plotly_chart(charts.ranked_bar(top, 'genres', value_col,
-                                      f"Top genres by {value_label.lower()}"),
+    st.plotly_chart(charts.genre_treemap(tree, value_col,
+                                         f"Genre families by {value_label.lower()}"),
                     use_container_width=True)
+
+    st.divider()
+    st.subheader("Top genres")
+    top = proc.top_genres(view, n=25, metric=value_col)
+    if not top.empty:
+        st.plotly_chart(charts.ranked_bar(top, 'genres', value_col,
+                                          f"Top genres by {value_label.lower()}"),
+                        use_container_width=True)
 
 
 def render_decades(df):
@@ -682,6 +706,26 @@ def render_decades(df):
     st.plotly_chart(charts.decade_bar(dec, value_col,
                                       f"{value_label} by decade"),
                     use_container_width=True)
+
+    st.divider()
+    st.subheader("Top bands & songs by decade")
+    st.caption("Ranked within each release decade (1960s onward) by "
+               f"{value_label.lower()}.")
+    n = st.slider("Per decade", 5, 25, 10, key="decade_n")
+
+    bands_wide = proc.top_artists_by_decade_wide(view, n=n, metric=value_col,
+                                                 min_decade=1960)
+    if bands_wide.empty:
+        st.info("No release-date data from the 1960s onward yet.")
+    else:
+        st.markdown("**Top bands**")
+        st.dataframe(bands_wide, width='stretch', height=38 * n + 60)
+
+    songs_wide = proc.top_tracks_by_decade_wide(view, n=n, metric=value_col,
+                                                min_decade=1960)
+    if not songs_wide.empty:
+        st.markdown("**Top songs**")
+        st.dataframe(songs_wide, width='stretch', height=38 * n + 60)
 
 
 _WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
@@ -797,7 +841,7 @@ def render_patterns(df):
     st.markdown("\n".join(lines))
 
 
-def render_binges(track_peaks, artist_peaks):
+def render_binges(track_peaks, artist_peaks, warmups):
     """Songs/bands that hit hard for a week (or two), then faded — ranked by
     binge_score = peak hours in any 7-day window, weighted by how much of
     that track/artist's *entire* history with you happened in that one
@@ -840,6 +884,43 @@ def render_binges(track_peaks, artist_peaks):
         'track_name': 'Track', 'artist_name': 'Artist', 'peak_hours': 'Peak hours',
         'window': 'Peak week', 'plays_in_window': 'Plays that week',
         'concentration_pct': 'Concentration %', 'total_hours': 'Lifetime hours',
+    }), width='stretch', hide_index=True)
+
+    st.divider()
+    render_concert_warmups(warmups)
+
+
+def render_concert_warmups(warmups):
+    """Bands with a 'charge up, then crash' shape: a burst of listening over
+    a couple of weeks, then a sharp, temporary drop right after — often the
+    sound of hyping up for a show and coming down from it. Distinct from the
+    Binges table above (which just ranks the single most concentrated
+    window) because it specifically requires the drop-off afterward."""
+    st.subheader("🎫 Concert warm-up")
+    st.caption("Bands that surged for a couple of weeks, then dropped off "
+               "sharply right after — ranked by spike hours × how steep the "
+               "drop was. A guess: this often lines up with a show.")
+    if warmups.empty:
+        st.info("Not enough data to find this pattern yet.")
+        return
+    hide_small = st.checkbox("Hide small spikes (< 1 hour)", value=True,
+                             key="warmup_floor")
+    shown = warmups[warmups['spike_hours'] >= (1.0 if hide_small else 0.0)].head(10)
+    if shown.empty:
+        st.info("Not enough data to find this pattern yet.")
+        return
+    table = shown.assign(
+        window=[f"{pd.Timestamp(s).date()} → {pd.Timestamp(e).date()}"
+                for s, e in zip(shown['spike_start'], shown['spike_end'])],
+        spike_hours=shown['spike_hours'].round(1),
+        cooldown_hours=shown['cooldown_hours'].round(1),
+        drop_pct=(shown['drop_pct'] * 100).round(0).astype(int),
+    )
+    st.dataframe(table[['artist_name', 'spike_hours', 'window', 'cooldown_hours',
+                        'drop_pct']].rename(columns={
+        'artist_name': 'Band', 'spike_hours': 'Spike hours (2 wks)',
+        'window': 'Spike window', 'cooldown_hours': 'Hours after (next 2 wks)',
+        'drop_pct': 'Drop %',
     }), width='stretch', hide_index=True)
 
 

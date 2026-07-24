@@ -376,6 +376,83 @@ def top_genres(df, n=20, metric='plays'):
     return _agg_counts(exploded, 'genres', metric).head(n)
 
 
+# Spotify's genre taxonomy is hundreds of narrow micro-genres (e.g. 'jangle
+# pop', 'power pop', 'dream pop', 'art pop' all separately) that fragment any
+# flat ranking. This buckets them into ~8 broad families by keyword, checked
+# in this order so overlapping words resolve sensibly (e.g. 'folk punk' hits
+# Punk before Folk, 'alt country' hits Folk / Americana before Rock / Indie).
+# The order here is search priority only — display color is assigned by
+# _GENRE_MACRO_COLOR_ORDER below, independent of this list, so a genre family
+# keeps the same color regardless of how big it is in any given date range.
+_GENRE_MACRO_RULES = [
+    ('Hip-Hop / R&B', ['hip hop', 'rap', 'r&b', 'soul', 'trap', 'grime']),
+    ('Electronic', ['edm', 'house', 'techno', 'electro', 'synth', 'idm',
+                     'dubstep', 'drum and bass', 'trance', 'downtempo', 'disco']),
+    ('World / Reggae / Jazz', ['reggae', 'dub', 'ska', 'ragga', 'dancehall',
+                                'rocksteady', 'jazz', 'classical', 'blues',
+                                'latin', 'world music', 'gospel']),
+    ('Metal', ['metal', 'doom', 'grindcore', 'sludge']),
+    ('Punk', ['punk', 'riot grrrl', 'hardcore']),
+    ('Folk / Americana', ['country', 'americana', 'bluegrass',
+                           'southern gothic', 'roots', 'honky', 'folk']),
+    ('Rock / Indie', ['rock', 'indie', 'new wave', 'grunge', 'shoegaze',
+                       'madchester']),
+    ('Pop', ['pop']),
+]
+_GENRE_MACRO_OTHER = 'Other'
+
+# Fixed display order/color slots (see charts.genre_treemap) — a family's
+# color never changes when a filter shrinks or grows the data.
+GENRE_MACRO_COLOR_ORDER = [
+    'Rock / Indie', 'Pop', 'Folk / Americana', 'Punk',
+    'Hip-Hop / R&B', 'Electronic', 'Metal', 'World / Reggae / Jazz',
+]
+
+
+def _macro_genre(genre):
+    low = genre.lower()
+    for macro, keywords in _GENRE_MACRO_RULES:
+        if any(k in low for k in keywords):
+            return macro
+    return _GENRE_MACRO_OTHER
+
+
+def genre_group_treemap_data(df, metric='plays', top_micro_per_macro=6):
+    """Two-level treemap data: macro genre family -> its top micro-genres.
+    Returns a tidy frame with one row per node (macro rows have
+    parent_id=''), ready for charts.genre_treemap(). Each macro's own
+    value is its *full* total (all micro-genres, not just the ones shown
+    as children), so the macro block sizes reflect true totals even though
+    only the top few micro-genres are broken out inside it."""
+    exploded = df.explode('genres').dropna(subset=['genres']).copy()
+    exploded['macro_genre'] = exploded['genres'].map(_macro_genre)
+
+    micro = (exploded.groupby(['macro_genre', 'genres'])
+                     .agg(plays=('ts', 'size'), minutes=('minutes_played', 'sum'))
+                     .reset_index())
+    micro['minutes'] = micro['minutes'].round(1)
+    micro = micro.sort_values(['macro_genre', metric], ascending=[True, False])
+    micro['rank'] = micro.groupby('macro_genre').cumcount() + 1
+    micro_top = micro[micro['rank'] <= top_micro_per_macro]
+
+    macro = (micro.groupby('macro_genre')
+                  .agg(plays=('plays', 'sum'), minutes=('minutes', 'sum'))
+                  .reset_index())
+    macro['minutes'] = macro['minutes'].round(1)
+
+    rows = [
+        {'id': m['macro_genre'], 'label': m['macro_genre'], 'parent_id': '',
+         'value': m[metric]}
+        for m in macro.to_dict('records')
+    ]
+    rows += [
+        {'id': f"{r['macro_genre']}::{r['genres']}", 'label': r['genres'],
+         'parent_id': r['macro_genre'], 'value': r[metric]}
+        for r in micro_top.to_dict('records')
+    ]
+    return pd.DataFrame(rows)
+
+
 def _sliding_window_peaks(df, group_cols, window_days=7):
     """For each group, find the [window_days]-day window (a true sliding
     window ending at some play — not calendar-aligned bins, so a binge
@@ -493,6 +570,134 @@ def wide_to_markdown(wide, title=None):
 def decade_breakdown(df):
     """Plays + minutes per release decade (drops plays lacking release data)."""
     return _agg_counts(df.dropna(subset=['decade']), 'decade').sort_values('decade')
+
+
+def _top_per_group_with_mode_label(df, group_col, key_cols, label_col, n, metric):
+    """Same title-drift-safe dedup as _top_by_key_with_mode_label (grouping by
+    an id column plus a mode-picked display label, e.g. track_uri -> track_name),
+    but ranked separately within each value of `group_col` (e.g. one top-N
+    per decade) rather than once globally."""
+    counts = (df.groupby([group_col, *key_cols, label_col])
+                .agg(plays=('ts', 'size'), minutes=('minutes_played', 'sum'))
+                .reset_index())
+    winners = counts.loc[counts.groupby([group_col, *key_cols])['plays'].idxmax(),
+                         [group_col, *key_cols, label_col]]
+    agg = (counts.groupby([group_col, *key_cols])
+                 .agg(plays=('plays', 'sum'), minutes=('minutes', 'sum'))
+                 .reset_index())
+    out = agg.merge(winners, on=[group_col, *key_cols])
+    out['minutes'] = out['minutes'].round(1)
+    out = out.sort_values([group_col, metric, label_col], ascending=[True, False, True])
+    out['rank'] = out.groupby(group_col).cumcount() + 1
+    return out[out['rank'] <= n][
+        [group_col, 'rank', label_col, *key_cols, 'plays', 'minutes']].reset_index(drop=True)
+
+
+def top_artists_per_decade(df, n=10, metric='plays', min_decade=None):
+    """Top-N artists for every release decade, tidy long format (like
+    top_artists_per_year but grouped by release decade instead of play year).
+    `min_decade` (e.g. 1960) drops earlier decades — mostly placeholder/junk
+    release dates rather than real listening."""
+    sub = df.dropna(subset=['decade'])
+    if min_decade is not None:
+        sub = sub[sub['decade'] >= min_decade]
+    counts = (sub.groupby(['decade', 'artist_name'])
+                .agg(plays=('ts', 'size'), minutes=('minutes_played', 'sum'))
+                .reset_index())
+    counts['minutes'] = counts['minutes'].round(1)
+    counts = counts.sort_values(['decade', metric, 'artist_name'],
+                                ascending=[True, False, True])
+    counts['rank'] = counts.groupby('decade').cumcount() + 1
+    out = counts[counts['rank'] <= n]
+    return out[['decade', 'rank', 'artist_name', 'plays', 'minutes']].reset_index(drop=True)
+
+
+def _decade_wide(long, cell_col, min_decade):
+    """Shared pivot for the decade rank-chart tables: rows are ranks 1..n,
+    columns are decades ('1960s', '1970s', ...) ascending from `min_decade`."""
+    if long.empty:
+        return long
+    wide = long.pivot(index='rank', columns='decade', values=cell_col)
+    wide = wide[sorted(wide.columns)]
+    wide.columns = [f"{int(c)}s" for c in wide.columns]
+    return wide
+
+
+def top_artists_by_decade_wide(df, n=10, metric='plays', min_decade=1960):
+    """Wide rank-chart view of top_artists_per_decade — ranks down the side,
+    decades across the top, same layout as top_artists_wide()."""
+    long = top_artists_per_decade(df, n=n, metric=metric, min_decade=min_decade)
+    return _decade_wide(long, 'artist_name', min_decade)
+
+
+def top_tracks_per_decade(df, n=10, metric='plays', min_decade=None):
+    """Top-N tracks for every release decade, grouped by track_uri (not name)
+    for the same title-drift reasons as top_tracks()."""
+    sub = df.dropna(subset=['decade'])
+    if min_decade is not None:
+        sub = sub[sub['decade'] >= min_decade]
+    return _top_per_group_with_mode_label(
+        sub, 'decade', ['track_uri', 'artist_name'], 'track_name', n, metric)
+
+
+def top_tracks_by_decade_wide(df, n=10, metric='plays', min_decade=1960):
+    """Wide rank-chart view of top_tracks_per_decade; each cell is
+    'Track — Artist' since track titles alone can be ambiguous/repeated."""
+    long = top_tracks_per_decade(df, n=n, metric=metric, min_decade=min_decade)
+    if long.empty:
+        return long
+    long = long.copy()
+    long['cell'] = long['track_name'] + ' — ' + long['artist_name']
+    return _decade_wide(long, 'cell', min_decade)
+
+
+def artist_concert_warmups(df, spike_days=14, cooldown_days=14):
+    """Bands with a "charge up, then crash" listening shape: a concentrated
+    burst over a `spike_days`-day window, followed by a sharp drop in the
+    `cooldown_days` days right after — the pattern of hyping up for a show,
+    then coming back down from it (as opposed to track/artist "binges",
+    which just rank the single most concentrated window regardless of what
+    follows it).
+
+    For each artist, finds the spike_days-day sliding window (same
+    cumsum/searchsorted approach as _sliding_window_peaks) with the most
+    listening, then compares its daily rate to the daily rate over the
+    following cooldown_days. Artists whose most recent play is within
+    cooldown_days of their spike (no runway to measure a "return to normal")
+    are dropped — can't tell a crash from "still going".
+
+    One row per qualifying artist: spike_hours, spike_start, spike_end,
+    cooldown_hours, drop_pct (share of the spike's daily rate lost right
+    after — 1.0 is a full stop, 0 is no change), warmup_score = spike_hours
+    * drop_pct, sorted descending."""
+    window = np.timedelta64(spike_days, 'D')
+    cooldown = np.timedelta64(cooldown_days, 'D')
+    latest_overall = df['ts'].values.max()  # numpy datetime64, matching per-group `ts` below
+    rows = []
+    for artist, g in df.sort_values('ts').groupby('artist_name', sort=False, observed=True):
+        ts = g['ts'].values
+        minutes = g['minutes_played'].values
+        cum = np.concatenate(([0.0], np.cumsum(minutes)))
+        left_idx = np.searchsorted(ts, ts - window, side='right')
+        n = len(ts)
+        idx = np.arange(1, n + 1)
+        window_sum = cum[idx] - cum[left_idx]
+        i = int(np.argmax(window_sum))
+        spike_start, spike_end = ts[left_idx[i]], ts[i]
+        spike_hours = window_sum[i] / 60.0
+        if spike_hours <= 0 or latest_overall - spike_end < cooldown:
+            continue
+        cool_mask = (ts > spike_end) & (ts <= spike_end + cooldown)
+        cooldown_hours = minutes[cool_mask].sum() / 60.0
+        spike_daily = spike_hours / spike_days
+        cooldown_daily = cooldown_hours / cooldown_days
+        drop_pct = max(0.0, 1 - cooldown_daily / spike_daily)
+        rows.append((artist, spike_hours, spike_start, spike_end,
+                     cooldown_hours, drop_pct, spike_hours * drop_pct))
+    out = pd.DataFrame(rows, columns=['artist_name', 'spike_hours', 'spike_start',
+                                       'spike_end', 'cooldown_hours', 'drop_pct',
+                                       'warmup_score'])
+    return out.sort_values('warmup_score', ascending=False).reset_index(drop=True)
 
 
 def top_hours(df, n=24, metric='plays'):
