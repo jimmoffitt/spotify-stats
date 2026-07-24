@@ -59,6 +59,24 @@ def alltime_stats_cached(path, mtime, excl_mtime, apply_excl):
     return proc.alltime_stats(df)
 
 
+@st.cache_data
+def track_binges_cached(path, mtime, excl_mtime, apply_excl):
+    """The full (unfiltered-by-floor) track_binges() table, cached the same
+    way as alltime_stats_cached. Caching the whole table rather than a
+    top-10 slice means toggling the "hide one-off curiosities" floor in the
+    UI is a free in-memory filter, not a recompute."""
+    df = (filtered_plays_cached(path, mtime, excl_mtime) if apply_excl
+          else load_plays_cached(path, mtime))
+    return proc.track_binges(df)
+
+
+@st.cache_data
+def artist_binges_cached(path, mtime, excl_mtime, apply_excl):
+    df = (filtered_plays_cached(path, mtime, excl_mtime) if apply_excl
+          else load_plays_cached(path, mtime))
+    return proc.artist_binges(df)
+
+
 def metric_columns(metric):
     """Map the sidebar metric toggle to (column, human label)."""
     return ('minutes', 'Minutes') if metric == 'Minutes' else ('plays', 'Plays')
@@ -163,20 +181,47 @@ def _df_to_exclusions(edited):
     return {"exclude": rules}
 
 
-def _sidebar_filters(df_all, show):
-    """Render the Analytics-only filters (Date range, Rank by). Assumes the
-    caller is already inside the sidebar context, so the block can sit
-    between the two nav groups. When `show` is False (Tools & settings pages)
-    it renders nothing and returns defaults. Returns (metric, range_sel).
-    """
-    if not show:
-        return "Plays", "All time"
-    st.divider()
-    st.markdown("**Filters**")
+def _page_filters(df_all, with_metric=True):
+    """Period (+ optionally Plays/Minutes) control row at the top of a page
+    — Date range and Rank by used to live in the sidebar, shown on every
+    Analytics page whether or not that page actually used them (Rankings,
+    Bands, and Wrapped never did). Rendering it inline on just the pages
+    that consume it fixes that, and matches the toolbar-row style Rankings
+    already uses locally for its own controls.
+
+    Per Streamlit's own docs ("Working with widgets in multipage apps"): a
+    widget's key and value are deleted from session_state the moment you
+    navigate away from the page that rendered it — a plain shared `key`
+    does NOT survive moving between different st.Page callables. Their
+    documented fix is what's used here: the widget itself uses a
+    throwaway key (`_date_range`), and its value is copied into a plain,
+    non-widget session_state entry (`date_range`) on every render — that
+    copy isn't tied to widget lifecycle, so it survives navigation, and
+    seeds the next page's `index` when the widget is freshly instantiated
+    there. Returns (range_sel, metric), metric is None when with_metric is
+    False."""
     years = sorted(df_all['year'].dropna().unique().tolist(), reverse=True)
-    range_sel = st.selectbox("Date range", _RANGE_PRESETS + [str(y) for y in years])
-    metric = st.radio("Rank by", ["Plays", "Minutes"], horizontal=True)
-    return metric, range_sel
+    range_opts = _RANGE_PRESETS + [str(y) for y in years]
+    range_cur = st.session_state.get('date_range', range_opts[0])
+    range_idx = range_opts.index(range_cur) if range_cur in range_opts else 0
+    if with_metric:
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            range_sel = st.selectbox("Date range", range_opts,
+                                     index=range_idx, key="_date_range")
+        with col2:
+            metric_opts = ["Plays", "Minutes"]
+            metric_cur = st.session_state.get('rank_by_metric', metric_opts[0])
+            metric_idx = metric_opts.index(metric_cur) if metric_cur in metric_opts else 0
+            metric = st.radio("Rank by", metric_opts, horizontal=True,
+                              index=metric_idx, key="_rank_by_metric")
+        st.session_state['date_range'] = range_sel
+        st.session_state['rank_by_metric'] = metric
+        return range_sel, metric
+    range_sel = st.selectbox("Date range", range_opts,
+                             index=range_idx, key="_date_range")
+    st.session_state['date_range'] = range_sel
+    return range_sel, None
 
 
 def _sidebar_options():
@@ -354,12 +399,12 @@ def main():
     ctx = {}
 
     # Page wrappers: st.Page needs zero-arg callables, so each reads from ctx.
-    def _artists():  render_artists(ctx['view'], ctx['value_col'], ctx['value_label'])
+    def _artists():  render_artists(ctx['df'])
     def _rankings(): render_rankings(ctx['df'])
-    def _tracks():   render_tracks(ctx['view'], ctx['value_col'], ctx['value_label'])
-    def _albums():   render_albums(ctx['view'], ctx['value_col'], ctx['value_label'])
-    def _genres():   render_genres(ctx['view'], ctx['value_col'], ctx['value_label'])
-    def _decades():  render_decades(ctx['view'], ctx['value_col'], ctx['value_label'])
+    def _tracks():   render_tracks(ctx['df'])
+    def _albums():   render_albums(ctx['df'])
+    def _genres():   render_genres(ctx['df'])
+    def _decades():  render_decades(ctx['df'])
     def _wrapped():
         # Computed here, not eagerly in main(), so visiting any other page
         # doesn't pay for alltime_stats_cached() — only Wrapped needs it.
@@ -367,11 +412,19 @@ def main():
                                        os.path.getmtime(config.PLAYS_FILE),
                                        ctx['excl_mtime'], ctx['apply_excl'])
         render_wrapped(ctx['df'], alltime)
-    def _patterns(): render_patterns(ctx['view'])
+    def _patterns(): render_patterns(ctx['df'])
     def _bands():    render_bands(ctx['df'])
+    def _binges():
+        track_peaks = track_binges_cached(config.PLAYS_FILE,
+                                          os.path.getmtime(config.PLAYS_FILE),
+                                          ctx['excl_mtime'], ctx['apply_excl'])
+        artist_peaks = artist_binges_cached(config.PLAYS_FILE,
+                                            os.path.getmtime(config.PLAYS_FILE),
+                                            ctx['excl_mtime'], ctx['apply_excl'])
+        render_binges(track_peaks, artist_peaks)
     def _artist_filters(): render_artist_filters(df_all)
-    def _explore():  render_explore(ctx['view'])
-    def _export():   render_export(ctx['view'])
+    def _explore():  render_explore(ctx['df'])
+    def _export():   render_export(ctx['df'])
     def _settings(): render_settings(ctx['df'])
 
     analytics = [
@@ -383,6 +436,7 @@ def main():
         st.Page(_bands,    title="Bands",    icon="🎤", url_path="bands"),
         st.Page(_genres,   title="Genres",   icon="🎼", url_path="genres"),
         st.Page(_patterns, title="Patterns", icon="🕐", url_path="patterns"),
+        st.Page(_binges,   title="Binges",   icon="🔥", url_path="binges"),
         st.Page(_decades,  title="Decades",  icon="📅", url_path="decades"),
     ]
     tools = [
@@ -458,7 +512,6 @@ def main():
         st.markdown("**Analytics**")
         for p in analytics:
             st.page_link(p)
-        metric, range_sel = _sidebar_filters(df_all, is_analytics)
         st.divider()
         _sidebar_data(df_all)
         st.divider()
@@ -513,15 +566,15 @@ def main():
           if apply_excl else df_all)
     n_excluded = len(df_all) - len(df)
 
-    value_col, value_label = metric_columns(metric)
-    view = _apply_range(df, range_sel)
-    ctx.update(df=df, view=view, value_col=value_col, value_label=value_label,
-               excl_mtime=excl_mtime, apply_excl=apply_excl)
+    ctx.update(df=df, excl_mtime=excl_mtime, apply_excl=apply_excl)
 
     st.title("🎵 sonic-stats")
     if is_analytics:
-        caption = (f"{len(view):,} plays · {view['minutes_played'].sum()/60:,.0f} "
-                   f"hours · {view['artist_name'].nunique():,} artists")
+        # All-time totals for the current exclusion state — "the selected
+        # range" is no longer a single global concept now that Date range
+        # lives on individual pages instead of the sidebar.
+        caption = (f"{len(df):,} plays · {df['minutes_played'].sum()/60:,.0f} "
+                   f"hours · {df['artist_name'].nunique():,} artists")
         caption += (f"  ·  🧒 filtered ({n_excluded:,} kid streams removed)"
                     if apply_excl and n_excluded else "  ·  unfiltered (all streams)")
         st.caption(caption)
@@ -531,9 +584,12 @@ def main():
 
 # --- Tab renderers ---
 
-def render_artists(df, value_col, value_label):
+def render_artists(df):
+    range_sel, metric = _page_filters(df)
+    value_col, value_label = metric_columns(metric)
+    view = _apply_range(df, range_sel)
     st.subheader("Top artists")
-    top = proc.top_artists(df, n=25, metric=value_col)
+    top = proc.top_artists(view, n=25, metric=value_col)
     st.plotly_chart(charts.ranked_bar(top, 'artist_name', value_col,
                                       f"Top artists by {value_label.lower()}"),
                     use_container_width=True)
@@ -573,9 +629,12 @@ def render_rankings(df):
         "top_artists_by_year.md", "text/markdown")
 
 
-def render_tracks(df, value_col, value_label):
+def render_tracks(df):
+    range_sel, metric = _page_filters(df)
+    value_col, value_label = metric_columns(metric)
+    view = _apply_range(df, range_sel)
     st.subheader("Top tracks")
-    top = proc.top_tracks(df, n=25, metric=value_col)
+    top = proc.top_tracks(view, n=25, metric=value_col)
     label = top['track_name'] + " — " + top['artist_name']
     chart_df = top.assign(label=label)
     st.plotly_chart(charts.ranked_bar(chart_df, 'label', value_col,
@@ -584,9 +643,12 @@ def render_tracks(df, value_col, value_label):
     st.dataframe(top, width='stretch', hide_index=True)
 
 
-def render_albums(df, value_col, value_label):
+def render_albums(df):
+    range_sel, metric = _page_filters(df)
+    value_col, value_label = metric_columns(metric)
+    view = _apply_range(df, range_sel)
     st.subheader("Top albums")
-    top = proc.top_albums(df, n=25, metric=value_col)
+    top = proc.top_albums(view, n=25, metric=value_col)
     label = top['artist_name'].fillna('Unknown') + " — " + top['album_name'].fillna('Unknown')
     chart_df = top.assign(label=label)
     st.plotly_chart(charts.ranked_bar(chart_df, 'label', value_col,
@@ -594,9 +656,12 @@ def render_albums(df, value_col, value_label):
                     use_container_width=True)
 
 
-def render_genres(df, value_col, value_label):
+def render_genres(df):
+    range_sel, metric = _page_filters(df)
+    value_col, value_label = metric_columns(metric)
+    view = _apply_range(df, range_sel)
     st.subheader("Top genres")
-    top = proc.top_genres(df, n=25, metric=value_col)
+    top = proc.top_genres(view, n=25, metric=value_col)
     if top.empty:
         st.info("No genre data yet — run artist enrichment.")
         return
@@ -605,9 +670,12 @@ def render_genres(df, value_col, value_label):
                     use_container_width=True)
 
 
-def render_decades(df, value_col, value_label):
+def render_decades(df):
+    range_sel, metric = _page_filters(df)
+    value_col, value_label = metric_columns(metric)
+    view = _apply_range(df, range_sel)
     st.subheader("Listening by release decade")
-    dec = proc.decade_breakdown(df)
+    dec = proc.decade_breakdown(view)
     if dec.empty:
         st.info("No release-date data yet — run track enrichment.")
         return
@@ -700,31 +768,79 @@ def render_wrapped(df, alltime):
 
 
 def render_patterns(df):
+    range_sel, _ = _page_filters(df, with_metric=False)
+    view = _apply_range(df, range_sel)
     st.subheader("When do I listen?")
-    if df.empty:
+    if view.empty:
         st.info("No plays in this range.")
         return
-    grid = proc.patterns_heatmap(df)
+    grid = proc.patterns_heatmap(view)
     st.plotly_chart(charts.hour_dow_heatmap(grid, "Plays by hour and day of week"),
                     use_container_width=True)
 
     st.markdown("**Times of week**")
-    top_tow = proc.top_times_of_week(df, n=5)
+    top_tow = proc.top_times_of_week(view, n=5)
     lines = [
         f"{i}. **{_WEEKDAYS[int(row['day_of_week'])]} {_fmt_hour(int(row['hour']))}** — "
-        f"{row['plays']:,} plays ({row['plays'] / len(df) * 100:.1f}% of all)"
+        f"{row['plays']:,} plays ({row['plays'] / len(view) * 100:.1f}% of all)"
         for i, row in enumerate(top_tow.to_dict('records'), start=1)
     ]
     st.markdown("\n".join(lines))
 
     st.markdown("**Top 5 listening hours**")
-    top5 = proc.top_hours(df, n=5)
+    top5 = proc.top_hours(view, n=5)
     lines = [
         f"{i}. **{_fmt_hour(int(row['hour']))}** — {row['plays']:,} plays "
-        f"({row['plays'] / len(df) * 100:.1f}% of all)"
+        f"({row['plays'] / len(view) * 100:.1f}% of all)"
         for i, row in enumerate(top5.to_dict('records'), start=1)
     ]
     st.markdown("\n".join(lines))
+
+
+def render_binges(track_peaks, artist_peaks):
+    """Songs/bands that hit hard for a week (or two), then faded — ranked by
+    binge_score = peak hours in any 7-day window, weighted by how much of
+    that track/artist's *entire* history with you happened in that one
+    window. Operates on the full archive (not date-range-filtered) since
+    concentration is only meaningful against the whole history."""
+    st.subheader("🔥 Binges")
+    st.caption("Ranked by peak hours in any 7-day window, weighted by how "
+               "concentrated that listening was — a short-lived spike "
+               "outranks an all-time favorite that just had one good week.")
+    mode = st.radio("Show", ["Bands", "Songs"], horizontal=True)
+    hide_oneoffs = st.checkbox(
+        "Hide one-off curiosities (< 2 total hours)", value=True,
+        help="Filters out entries with too little lifetime listening for "
+             "'faded' to mean anything — e.g. tried it once, moved on.")
+    floor = 2.0 if hide_oneoffs else 0.0
+
+    peaks = artist_peaks if mode == "Bands" else track_peaks
+    shown = peaks[peaks['total_hours'] >= floor].head(10)
+    if shown.empty:
+        st.info("Not enough data to find a binge yet.")
+        return
+
+    label = (shown['artist_name'] if mode == "Bands"
+             else shown['track_name'] + " — " + shown['artist_name'])
+    chart_df = shown.assign(label=label)
+    st.plotly_chart(charts.ranked_bar(chart_df, 'label', 'peak_hours',
+                    f"Top {mode.lower()} binges (peak hours in any 7-day window)"),
+                    use_container_width=True)
+
+    table = shown.assign(
+        window=[f"{pd.Timestamp(s).date()} → {pd.Timestamp(e).date()}"
+                for s, e in zip(shown['peak_start'], shown['peak_end'])],
+        concentration_pct=(shown['concentration'] * 100).round(0).astype(int),
+        peak_hours=shown['peak_hours'].round(1),
+        total_hours=shown['total_hours'].round(1),
+    )
+    cols = ['track_name', 'artist_name'] if mode == "Songs" else ['artist_name']
+    cols += ['peak_hours', 'window', 'plays_in_window', 'concentration_pct', 'total_hours']
+    st.dataframe(table[cols].rename(columns={
+        'track_name': 'Track', 'artist_name': 'Artist', 'peak_hours': 'Peak hours',
+        'window': 'Peak week', 'plays_in_window': 'Plays that week',
+        'concentration_pct': 'Concentration %', 'total_hours': 'Lifetime hours',
+    }), width='stretch', hide_index=True)
 
 
 def render_bands(df):
