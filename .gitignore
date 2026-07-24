@@ -32,10 +32,10 @@ data/settings.json
 data/exclusions.json
 data/groups.json
 
-# Demo mode (data/demo/): the sanitized plays.parquet from make_demo_data.py
-# IS tracked; runtime writes made while running in demo mode are not.
+# Demo mode (data/demo/): the sanitized plays.parquet and exclusions.json
+# from make_demo_data.py ARE tracked; runtime writes made while running in
+# demo mode are not.
 data/demo/settings.json
-data/demo/exclusions.json
 data/demo/groups.json
 data/demo/last_sync.json
 

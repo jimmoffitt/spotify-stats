@@ -12,11 +12,17 @@ data to strip. This script still enumerates a field whitelist and reports
 what it kept, so a future column added to build_plays_df doesn't silently
 ride along into the public demo without a deliberate decision.
 
+Also copies data/exclusions.json (artist names + before/after/keep rules —
+no play-level data) to data/demo/exclusions.json as-is, so the demo actually
+demonstrates the "Remove kid streams" filter instead of leaving it a no-op.
+
 The app switches to this dataset in demo mode (see DEMO_MODE in
 src/config.py). Rerun this script after a sync to refresh the demo data,
 then review and commit the result.
 """
+import json
 import os
+import shutil
 
 import pandas as pd
 
@@ -31,10 +37,11 @@ FIELD_WHITELIST = [
     'year', 'month', 'hour', 'day_of_week',
 ]
 
-# Real path, deliberately independent of config's DEMO_MODE redirection so
-# this script always reads the true processed file even if SPOTIFY_STATS_DEMO
-# is set.
+# Real paths, deliberately independent of config's DEMO_MODE redirection so
+# this script always reads the true files even if SPOTIFY_STATS_DEMO is set.
 REAL_PLAYS_FILE = os.path.join('data', 'processed', 'plays.parquet')
+REAL_EXCLUSIONS_FILE = os.path.join('data', 'exclusions.json')
+DEMO_EXCLUSIONS_FILE = os.path.join('data', 'demo', 'exclusions.json')
 
 
 def main():
@@ -51,6 +58,14 @@ def main():
     print(f"Dropped columns: {', '.join(dropped) or '(none)'}")
     print(f"Date range: {sanitized['ts'].min().date()} -> {sanitized['ts'].max().date()}")
     print(f"Distinct artists: {sanitized['artist_name'].nunique():,}")
+
+    if os.path.exists(REAL_EXCLUSIONS_FILE):
+        shutil.copyfile(REAL_EXCLUSIONS_FILE, DEMO_EXCLUSIONS_FILE)
+        n_rules = len(json.load(open(REAL_EXCLUSIONS_FILE)).get('exclude', {}))
+        print(f"Wrote {n_rules:,} exclusion rule(s) -> {DEMO_EXCLUSIONS_FILE}")
+    else:
+        print(f"No {REAL_EXCLUSIONS_FILE} found — demo will have no exclusion "
+              f"rules (the 'Remove kid streams' toggle will be a no-op).")
 
 
 if __name__ == '__main__':
