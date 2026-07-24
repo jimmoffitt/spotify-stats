@@ -6,7 +6,7 @@ Spotify Wrapped leaves out: how your taste shifts year over year, which artists,
 albums, and decades dominate, when you actually listen, and deep-dives on any
 band or group of bands.
 
-**🚀 Live demo: [_add your Streamlit Community Cloud URL here after deploying_](#deploying-a-read-only-demo)** —
+**🚀 Live demo: [sonic-stats.streamlit.app](https://sonic-stats.streamlit.app/)** —
 a read-only build with a sanitized copy of the real dataset (see
 [How the demo works](#how-the-demo-works)).
 
