@@ -433,6 +433,17 @@ def top_hours(df, n=24, metric='plays'):
     return _agg_counts(df, 'hour', metric).head(n)
 
 
+def top_times_of_week(df, n=5, metric='plays'):
+    """Total plays/minutes per (day_of_week, hour) cell — specific times of
+    week (e.g. 'Friday 4pm'), sorted by `metric` desc. More granular than
+    top_hours, which aggregates a given hour across every day of the week."""
+    out = (df.groupby(['day_of_week', 'hour'])
+             .agg(plays=('ts', 'size'), minutes=('minutes_played', 'sum'))
+             .reset_index())
+    out['minutes'] = out['minutes'].round(1)
+    return out.sort_values(metric, ascending=False).head(n)
+
+
 def patterns_heatmap(df):
     """day_of_week (0-6) x hour (0-23) play-count grid for the Patterns tab."""
     grid = (df.pivot_table(index='day_of_week', columns='hour',

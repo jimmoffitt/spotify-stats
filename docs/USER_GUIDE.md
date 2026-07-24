@@ -152,10 +152,12 @@ all your listening**, and a per-band breakdown. Below, a "New Zealand" group of
 ### 🕐 Patterns & 📅 Decades
 
 **Patterns** plots plays across hour-of-day × day-of-week, so your listening
-rhythm (late-night sessions, weekday commutes) pops out — a ranked **Top 5
-listening hours** list sits below the heatmap for a quick read without having
-to squint at the grid. **Decades** breaks listening down by the *release*
-decade of the music.
+rhythm (late-night sessions, weekday commutes) pops out. Below the heatmap,
+two ranked lists give a quick, exact read without having to squint at the
+grid: **Times of week** (your top 5 specific day+hour slots, e.g. "Friday
+4pm") and **Top 5 listening hours** (the same ranking collapsed across all
+days, e.g. "4pm"). **Decades** breaks listening down by the *release* decade
+of the music.
 
 ![Patterns page](screenshots/guide/patterns.png)
 

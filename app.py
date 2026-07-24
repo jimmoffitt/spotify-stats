@@ -486,6 +486,15 @@ def render_patterns(df):
     st.plotly_chart(charts.hour_dow_heatmap(grid, "Plays by hour and day of week"),
                     use_container_width=True)
 
+    st.markdown("**Times of week**")
+    top_tow = proc.top_times_of_week(df, n=5)
+    lines = [
+        f"{i}. **{_WEEKDAYS[int(row['day_of_week'])]} {_fmt_hour(int(row['hour']))}** — "
+        f"{row['plays']:,} plays ({row['plays'] / len(df) * 100:.1f}% of all)"
+        for i, row in enumerate(top_tow.to_dict('records'), start=1)
+    ]
+    st.markdown("\n".join(lines))
+
     st.markdown("**Top 5 listening hours**")
     top5 = proc.top_hours(df, n=5)
     lines = [
