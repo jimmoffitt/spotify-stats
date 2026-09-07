@@ -115,6 +115,171 @@ def save_warmup_false_positives(names, path=config.WARMUP_FALSE_POSITIVES_FILE):
         json.dump(sorted(set(names)), f, indent=2, ensure_ascii=False)
 
 
+def load_confirmed_concerts(path=config.CONFIRMED_CONCERTS_FILE):
+    """Concert candidates promoted via checkbox in render_concert_matches —
+    a flat JSON list of {artist_name, event_date, venue_name, city_name}
+    dicts (event_date as an ISO string). Missing file -> []."""
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return []
+
+
+def save_confirmed_concerts(concerts, path=config.CONFIRMED_CONCERTS_FILE):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(concerts, f, indent=2, ensure_ascii=False)
+
+
+
+
+
+
+def concert_match_candidates(df, shows, correlation_days=3):
+    """Rank every real setlist.fm show for a library artist by how
+    elevated the artist's listening was in the days around it, compared
+    to that artist's own normal (baseline) daily rate elsewhere in their
+    history — the same "elevated vs. your normal rate" idea
+    artist_concert_warmups() uses for a listening-detected spike window,
+    applied here to a real show date instead. All shows are returned, not
+    just correlated ones: setlist.fm's authority that a show happened
+    doesn't depend on whether it left a mark on your listening history, so
+    a show with zero nearby listening still appears — just ranked at the
+    bottom (elevation 0) instead of dropped.
+
+    One row per (artist_name, event_date, venue_name, city_name):
+    nearby_minutes, nearby_plays (within +/- correlation_days), elevation
+    (nearby daily rate / baseline daily rate — 0 if there's no nearby
+    listening, or the artist has no listening history at all), sorted by
+    elevation descending then nearby_minutes descending."""
+    cols = ['artist_name', 'event_date', 'venue_name', 'city_name',
+            'nearby_minutes', 'nearby_plays', 'elevation']
+    if not shows:
+        return pd.DataFrame(columns=cols)
+
+    # tz_localize(None) first for the same reason as _concert_night_signal:
+    # comparing a still-tz-aware series round-trips through its UTC instant,
+    # which would shift the window boundaries by the local UTC offset.
+    ts_local = df['ts_local'].dt.tz_localize(None)
+    window = pd.Timedelta(days=correlation_days)
+    window_days = max(2 * correlation_days, 1)
+
+    # Baseline daily rate per artist referenced by `shows`, computed once
+    # per artist (not per show — an artist can have several candidate
+    # shows) from their *whole* history, not excluding any one show's
+    # window. A simplification: an artist with one real listening bump
+    # will have that bump nudge their own baseline up slightly, which very
+    # lightly understates elevation — acceptable for a ranking signal, not
+    # worth a per-show-excluded baseline's added complexity here.
+    baseline_daily = {}
+    for artist in {s['artist_name'] for s in shows}:
+        g = df.loc[df['artist_name'] == artist]
+        if g.empty:
+            baseline_daily[artist] = 0.0
+            continue
+        span_days = max((g['ts'].max() - g['ts'].min()) / np.timedelta64(1, 'D'), 1.0)
+        baseline_daily[artist] = g['minutes_played'].sum() / span_days
+
+    rows = []
+    for show in shows:
+        event_ts = pd.Timestamp(show['event_date'])
+        mask = ((df['artist_name'] == show['artist_name']) &
+                (ts_local >= event_ts - window) & (ts_local <= event_ts + window))
+        sub = df.loc[mask]
+        nearby_minutes = sub['minutes_played'].sum()
+        nearby_plays = len(sub)
+        base = baseline_daily.get(show['artist_name'], 0.0)
+        elevation = (nearby_minutes / window_days / base) if base > 0 else 0.0
+        rows.append((show['artist_name'], show['event_date'], show['venue_name'],
+                    show['city_name'], nearby_minutes, nearby_plays, elevation))
+    return (pd.DataFrame(rows, columns=cols)
+            .sort_values(['elevation', 'nearby_minutes'], ascending=[False, False])
+            .reset_index(drop=True))
+
+
+def concert_nominations(warmups, matches, false_positives, match_window_days=14):
+    """Merge the two concert-detection signals into one reviewable
+    nomination queue for render_concert_review(): the listening-pattern
+    warm-up heuristic (artist_concert_warmups() — one row per artist, a
+    *guessed* show date) and the setlist.fm-ranked real show list
+    (concert_match_candidates() — one row per real show, a *real* date).
+
+    When an artist has both, the warm-up's guessed date (concert_night if
+    detected, else spike_end) is matched to the closest real setlist.fm
+    show within +/- match_window_days and folded into one row
+    (signal='both', using the real date/venue) rather than shown as two
+    separate rows that are almost certainly the same event. Everything
+    else keeps its own row: warm-up-only candidates (no known venue, since
+    the heuristic has no venue data) and setlist.fm shows with no matching
+    warm-up spike (signal='setlistfm').
+
+    `false_positives` (artist names) are excluded from both signals before
+    merging — a dismissal applies to the artist across every source, not
+    just one row.
+
+    One row per nomination: artist_name, event_date, venue_name,
+    city_name, signal, warmup_score, elevation, nearby_minutes. Ranked
+    reverse-chronologically (most recent show date first); a confidence
+    tier (both signals > setlist.fm with some listening support > warm-up
+    only > setlist.fm with none) and score only break same-date ties."""
+    cols = ['artist_name', 'event_date', 'venue_name', 'city_name', 'signal',
+            'warmup_score', 'elevation', 'nearby_minutes']
+    if not warmups.empty:
+        warmups = warmups[~warmups['artist_name'].isin(false_positives)]
+    if not matches.empty:
+        matches = matches[~matches['artist_name'].isin(false_positives)]
+    if warmups.empty and matches.empty:
+        return pd.DataFrame(columns=cols)
+
+    matches_by_artist = ({artist: g for artist, g in matches.groupby('artist_name')}
+                         if not matches.empty else {})
+
+    rows = []
+    consumed = set()  # (artist_name, event_date) already folded into a 'both' row
+    if not warmups.empty:
+        for _, w in warmups.iterrows():
+            artist = w['artist_name']
+            guess_date = pd.Timestamp(
+                w['concert_night'] if w['has_concert_night'] else w['spike_end']).date()
+            best, best_diff = None, None
+            for _, m in matches_by_artist.get(artist, pd.DataFrame()).iterrows():
+                diff = abs((m['event_date'] - guess_date).days)
+                if diff <= match_window_days and (best_diff is None or diff < best_diff):
+                    best, best_diff = m, diff
+            if best is not None:
+                rows.append((artist, best['event_date'], best['venue_name'],
+                            best['city_name'], 'both', w['warmup_score'],
+                            best['elevation'], best['nearby_minutes']))
+                consumed.add((artist, best['event_date']))
+            else:
+                rows.append((artist, guess_date, None, None, 'warmup',
+                            w['warmup_score'], None, None))
+
+    if not matches.empty:
+        for _, m in matches.iterrows():
+            if (m['artist_name'], m['event_date']) in consumed:
+                continue
+            rows.append((m['artist_name'], m['event_date'], m['venue_name'],
+                        m['city_name'], 'setlistfm', None, m['elevation'],
+                        m['nearby_minutes']))
+
+    out = pd.DataFrame(rows, columns=cols)
+
+    def _tier(row):
+        if row['signal'] == 'both':
+            return 0
+        if row['signal'] == 'setlistfm':
+            return 1 if (row['elevation'] or 0) > 0 else 3
+        return 2  # warmup-only
+
+    out['_tier'] = out.apply(_tier, axis=1)
+    out['_score'] = out['elevation'].fillna(0) + out['warmup_score'].fillna(0)
+    out['_date_sort'] = pd.to_datetime(out['event_date'])
+    return (out.sort_values(['_date_sort', '_tier', '_score'],
+                            ascending=[False, True, False])
+            .drop(columns=['_tier', '_score', '_date_sort']).reset_index(drop=True))
+
+
 def _month_index(year, month):
     """Map a (year, month) to a single comparable integer (months since year 0)."""
     return int(year) * 12 + (int(month) - 1)
@@ -968,6 +1133,22 @@ def list_artists(df, metric='plays'):
     return _agg_counts(df, 'artist_name', metric)['artist_name'].tolist()
 
 
+def list_artists_recent(df, days=90, metric='minutes'):
+    """Like list_artists(), but restricted to plays within the last `days`
+    days of the archive's latest play — surfaces artists with a recent
+    listening bump that an all-time ranking would miss entirely (a newer
+    favorite you've been bingeing lately, even if their lifetime total
+    is nowhere near your all-time top artists). Used alongside
+    list_artists() to build the setlist.fm query pool in
+    render_concert_settings — an all-time favorite might tour again
+    without a recent spike, and a recent obsession might not have enough
+    lifetime plays yet, so neither ranking alone covers both cases."""
+    if df.empty:
+        return []
+    cutoff = df['ts'].max() - pd.Timedelta(days=days)
+    return list_artists(df[df['ts'] >= cutoff], metric=metric)
+
+
 def artist_rankings(df, metric='plays'):
     """All artists ranked by `metric`, with a 1-based 'rank' column."""
     out = _agg_counts(df, 'artist_name', metric).reset_index(drop=True)
@@ -985,6 +1166,48 @@ def _consecutive_day_streak(dates):
         run = run + 1 if (cur - prev).days == 1 else 1
         longest = max(longest, run)
     return longest
+
+
+def _longest_gap(dates):
+    """Longest run of consecutive calendar days with *no* listening at all
+    — the biggest break from Spotify. Returns (gap_days, start, end): the
+    empty stretch strictly between two active days (both dates excluded
+    from the count, e.g. listened Jan 1 and Jan 11 -> a 9-day gap), or
+    (0, None, None) if there are fewer than two distinct active days."""
+    days = sorted(set(dates))
+    if len(days) < 2:
+        return 0, None, None
+    best_gap, best_start, best_end = 0, None, None
+    for prev, cur in zip(days, days[1:]):
+        gap = (cur - prev).days - 1
+        if gap > best_gap:
+            best_gap, best_start, best_end = gap, prev, cur
+    return best_gap, best_start, best_end
+
+
+def sidebar_time_stats(df):
+    """Cheap headline time-commitment stats for the sidebar (see
+    _sidebar_time_stats in app.py) — total hours, average pace per day/
+    week/month, longest daily streak, and the longest gap with no
+    listening at all. Deliberately lighter than alltime_stats() (no top-N
+    groupbys over artists/tracks/albums/genres) since this runs on every
+    page load via the sidebar, not just the Wrapped page."""
+    if df.empty:
+        return {}
+    dates = df['ts_local'].dt.date
+    total_hours = df['minutes_played'].sum() / 60
+    span_days = max((df['ts'].max() - df['ts'].min()).days + 1, 1)
+    gap_days, gap_start, gap_end = _longest_gap(dates)
+    return {
+        'total_hours': total_hours,
+        'avg_hours_per_day': total_hours / span_days,
+        'avg_hours_per_week': total_hours / span_days * 7,
+        'avg_hours_per_month': total_hours / span_days * (365.25 / 12),
+        'longest_streak': _consecutive_day_streak(dates),
+        'longest_gap_days': gap_days,
+        'longest_gap_start': gap_start,
+        'longest_gap_end': gap_end,
+    }
 
 
 def artist_facts(df, artist, metric='plays'):

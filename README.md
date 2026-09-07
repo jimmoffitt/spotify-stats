@@ -42,12 +42,16 @@ Streamlit's own light/dark theme setting automatically.
 - **🎤 Groups of Groups dude** — single-artist deep-dives (rank among your
   artists, peak year, listening clock) and saveable **groups** of bands with
   combined summaries; opens on an overview of the groups you've already made.
-- **🔥 Binges and Concerts** — songs and bands that hit hard for a week or two
-  then faded, plus a tunable **Concert warm-up** detector for the
-  spike-then-crash pattern of hyping up for a show (build-up window,
-  elevation vs. your normal listening, cooldown window, and an optional
-  re-ranking signal for a late-night "drove home from the show" listening
-  cluster), with a way to flag false positives.
+- **🔥 Binges** — songs and bands that hit hard for a week or two then faded.
+- **🎫 Concerts** — two independent "did I go to this show" signals: a tunable
+  **Concert warm-up** detector for the spike-then-crash pattern of hyping up
+  for a show (build-up window, elevation vs. your normal listening, cooldown
+  window, and an optional re-ranking signal for a late-night "drove home from
+  the show" listening cluster), with a way to flag false positives; and
+  **Concert matches**, real past shows pulled from setlist.fm for your
+  library artists and cross-referenced against nearby listening, with a
+  checkbox to confirm a match (needs a free `SETLISTFM_API_KEY` — see
+  `example.env`).
 - **🕐 Patterns** — an hour-of-day × day-of-week listening heatmap.
 - **🔍 Explore / 📤 Export** — full-text search of the raw play log, and CSV exports.
 - **🚫 Artist filters** — drop shared-account streams (e.g. a kid's listening)

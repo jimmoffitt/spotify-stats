@@ -32,6 +32,7 @@ data/settings.json
 data/exclusions.json
 data/groups.json
 data/warmup_false_positives.json
+data/confirmed_concerts.json
 
 # Demo mode (data/demo/): the sanitized plays.parquet, exclusions.json, and
 # groups.json from make_demo_data.py ARE tracked; runtime writes made while
@@ -39,6 +40,7 @@ data/warmup_false_positives.json
 data/demo/settings.json
 data/demo/last_sync.json
 data/demo/warmup_false_positives.json
+data/demo/confirmed_concerts.json
 
 # Local Claude Code settings (personal, machine-specific)
 .claude/settings.local.json

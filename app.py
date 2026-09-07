@@ -28,7 +28,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import run_pipeline
-from src import charts, config, process_data as proc, story
+from src import charts, config, process_data as proc, setlistfm, story
 
 st.set_page_config(page_title="sonic-stats", page_icon="🎵", layout="wide",
                    initial_sidebar_state="expanded")
@@ -46,6 +46,17 @@ def filtered_plays_cached(path, mtime, excl_mtime):
     `mtime`/`excl_mtime` bust the cache when the parquet or exclusions change."""
     df_all = load_plays_cached(path, mtime)
     return proc.apply_exclusions(df_all, proc.load_exclusions())
+
+
+@st.cache_data
+def sidebar_time_stats_cached(path, mtime):
+    """Cached the same way as load_plays_cached — this renders on every
+    page via the sidebar, so it needs to be cheap-to-repeat, not just
+    cheap-to-compute-once. Uses the unfiltered df_all (same as the
+    sidebar's own plays/hours/artists caption above it), not the
+    exclusion-filtered frame — apply_excl isn't resolved yet at the point
+    the sidebar renders (see main())."""
+    return proc.sidebar_time_stats(load_plays_cached(path, mtime))
 
 
 @st.cache_data
@@ -106,7 +117,7 @@ def metric_columns(metric):
 
 
 # "All time" first so it stays the default (index 0) selectbox choice.
-_RANGE_PRESETS = ["All time", "Last 7 days", "Last 30 days", "This month"]
+_RANGE_PRESETS = ["All time", "Last 24 hrs", "Last 7 days", "Last 30 days", "This month"]
 
 
 def _apply_range(df, sel):
@@ -120,6 +131,8 @@ def _apply_range(df, sel):
     if sel == "This month":
         return df[(df['ts_local'].dt.year == latest.year) &
                   (df['ts_local'].dt.month == latest.month)]
+    if sel == "Last 24 hrs":
+        return df[df['ts_local'] >= latest - pd.Timedelta(hours=24)]
     if sel == "Last 7 days":
         return df[df['ts_local'] >= latest - pd.Timedelta(days=7)]
     if sel == "Last 30 days":
@@ -334,6 +347,28 @@ def _sidebar_data(df_all):
         st.caption("Authorize once in a terminal: `python -m src.setup_tokens`")
 
 
+def _sidebar_time_stats():
+    """Headline time-commitment stats in the sidebar: total hours, average
+    listening pace (day/week/month), longest daily streak, and the
+    biggest gap with no Spotify activity at all — a different lens than
+    any single Analytics page, so it lives here instead of its own tab."""
+    stats = sidebar_time_stats_cached(config.PLAYS_FILE,
+                                      os.path.getmtime(config.PLAYS_FILE))
+    if not stats:
+        return
+    st.markdown("**⏱️ Listening time**")
+    st.caption(f"{stats['total_hours']:,.0f} total hours")
+    st.caption(f"Avg {stats['avg_hours_per_day']:.1f} hr/day · "
+               f"{stats['avg_hours_per_week']:.1f} hr/week · "
+               f"{stats['avg_hours_per_month']:.0f} hr/month")
+    streak = stats['longest_streak']
+    st.caption(f"🔥 Longest streak: {streak} day{'s' if streak != 1 else ''}")
+    gap = stats['longest_gap_days']
+    if gap:
+        st.caption(f"💤 Biggest break: {gap} day{'s' if gap != 1 else ''} "
+                   f"({stats['longest_gap_start']} → {stats['longest_gap_end']})")
+
+
 def _extract_gdpr_zip(uploaded_file):
     """Pull Streaming_History_Audio_*.json files out of an uploaded Spotify
     export zip and write them into data/raw/, flattening any folder structure
@@ -478,13 +513,15 @@ def main():
         artist_peaks = artist_binges_cached(config.PLAYS_FILE,
                                             os.path.getmtime(config.PLAYS_FILE),
                                             ctx['excl_mtime'], ctx['apply_excl'])
-        # Warmups depend on tunable sliders drawn inside render_concert_warmups
+        render_binges(track_peaks, artist_peaks)
+    def _concerts():
+        # Warmups depend on tunable sliders drawn inside render_concert_settings
         # itself, so it's a loader closure rather than a precomputed table —
         # each slider combo still hits concert_warmups_cached's own cache.
         warmup_loader = lambda **kw: concert_warmups_cached(
             config.PLAYS_FILE, os.path.getmtime(config.PLAYS_FILE),
             ctx['excl_mtime'], ctx['apply_excl'], **kw)
-        render_binges(track_peaks, artist_peaks, warmup_loader)
+        render_concerts(warmup_loader, ctx['df'])
     def _artist_filters(): render_artist_filters(df_all)
     def _explore():  render_explore(ctx['df'])
     def _export():   render_export(ctx['df'])
@@ -496,7 +533,8 @@ def main():
         st.Page(_albums,   title="Albums",   icon="💿", url_path="albums"),
         st.Page(_rankings, title="Favorite bands by year", icon="🏆", url_path="rankings"),
         st.Page(_patterns, title="Patterns", icon="🕐", url_path="patterns"),
-        st.Page(_binges,   title="Binges and Concerts", icon="🔥", url_path="binges"),
+        st.Page(_binges,   title="Binges", icon="🔥", url_path="binges"),
+        st.Page(_concerts, title="Concerts", icon="🎫", url_path="concerts"),
         st.Page(_decades,  title="Decades",  icon="📅", url_path="decades"),
         st.Page(_genres,   title="Genres",   icon="🎼", url_path="genres"),
         st.Page(_bands,    title="Groups of Groups dude", icon="🎤", url_path="bands"),
@@ -586,6 +624,8 @@ def main():
                 st.caption("🧪 *experimental & evolving below*")
         st.divider()
         _sidebar_data(df_all)
+        st.divider()
+        _sidebar_time_stats()
         st.divider()
         st.markdown("**Tools & settings**")
         for p in tools:
@@ -977,7 +1017,7 @@ def render_wrapped_story(df, alltime, story_loader):
     # which defaults to all-time) but the *default selection* is the
     # current calendar year when it's present, so this opens on "my year
     # so far" rather than just the last month.
-    window_options = (["Last 30 days", "Last 7 days", "This month", "All time"] +
+    window_options = (["Last 30 days", "Last 7 days", "Last 24 hrs", "This month", "All time"] +
                       [str(y) for y in sorted(df['year'].dropna().unique(), reverse=True)])
     current_year = str(datetime.now().year)
     default_idx = window_options.index(current_year) if current_year in window_options else 0
@@ -1019,7 +1059,7 @@ def render_patterns(df):
     st.markdown("\n".join(lines))
 
 
-def render_binges(track_peaks, artist_peaks, warmup_loader):
+def render_binges(track_peaks, artist_peaks):
     """Songs/bands that hit hard for a week (or two), then faded — ranked by
     binge_score = peak hours in any 7-day window, weighted by how much of
     that track/artist's *entire* history with you happened in that one
@@ -1064,154 +1104,467 @@ def render_binges(track_peaks, artist_peaks, warmup_loader):
         'concentration_pct': 'Concentration %', 'total_hours': 'Lifetime hours',
     }), width='stretch', hide_index=True)
 
+
+def render_concerts(warmup_loader, df):
+    """Concerts page: the confirmed-concerts list leads — it's the curated
+    payoff of everything below it, not a byproduct — followed by a
+    collapsed tuning/settings expander for both detection signals, a
+    one-off search tool for a specific artist/city outside that bulk pool,
+    the merged nomination queue for reviewing new candidates, and the
+    dismissed list at the bottom."""
+    render_confirmed_concerts()
     st.divider()
-    render_concert_warmups(warmup_loader)
-
-
-def render_concert_warmups(warmup_loader):
-    """Bands with a 'charge up, then crash' shape: a burst of listening,
-    then a sharp, temporary drop right after — often the sound of hyping up
-    for a show and coming down from it. Distinct from the Binges table above
-    (which just ranks the single most concentrated window) because it
-    specifically requires the drop-off afterward. All four knobs below feed
-    proc.artist_concert_warmups() directly (via warmup_loader, a closure
-    over the cached loader from main()), so every combination is exact, not
-    a client-side filter of one fixed computation."""
-    st.subheader("🎫 Concert warm-up")
-    st.caption("Bands that surged, then dropped off sharply right after — "
-               "ranked by spike hours × how steep the drop was. A guess: "
-               "this often lines up with a show. Tune the pattern below if "
-               "it's not matching what you remember — your settings are "
-               "saved automatically.")
-    # Sliders default to the last-saved values (data/settings.json) rather
-    # than fixed constants, and any change is written straight back below —
-    # so the tuning persists across sessions instead of resetting every run.
-    saved = proc.load_settings()['concert_warmup']
-    c1, c2 = st.columns(2)
-    spike_days = c1.slider("Build-up window (days)", 3, 30, saved['spike_days'],
-                           key="warmup_spike_days",
-                           help="How many days of build-up counts as one "
-                                "'show cycle' — the window the spike is "
-                                "measured over.")
-    min_spike_hours = c2.slider("Minimum hours of listening in that window",
-                                0.0, 20.0, saved['min_spike_hours'], step=0.5,
-                                key="warmup_min_hours",
-                                help="Ignore spikes below this many hours "
-                                     "total — filters out one-off blips.")
-    c3, c4 = st.columns(2)
-    elevation_ratio = c3.slider("Elevated rotation (× your normal rate)",
-                                1.0, 10.0, saved['elevation_ratio'], step=0.5,
-                                key="warmup_elevation",
-                                help="How far above that artist's normal "
-                                     "daily rate the spike must be to count "
-                                     "as genuinely 'elevated' — without this, "
-                                     "an artist you always play a lot would "
-                                     "trivially have a 'biggest window ever'.")
-    cooldown_days = c4.slider("Drop-off window after the spike (days)",
-                              1, 14, saved['cooldown_days'], key="warmup_cooldown_days",
-                              help="How soon after the spike to check for "
-                                   "the crash — set to 1 for a same-day/"
-                                   "next-day drop-off.")
-
-    c5, c6 = st.columns(2)
-    top_n = c5.slider("Show top N", 5, 50, saved['top_n'], step=5, key="warmup_top_n",
-                      help="How many ranked candidates to display.")
-    rank_by_concert_night = c6.checkbox(
-        "🌙 Rank by drive-home pattern first", value=saved['rank_by_concert_night'],
-        key="warmup_rank_by_night",
-        help="Bands with a late-night (10pm-1am) listening cluster during "
-             "their spike window — the classic drove-home-from-a-show "
-             "pattern, optionally backed up by a same-day 3-6pm pre-show "
-             "session — are ranked above those without one, before falling "
-             "back to spike hours × drop-off within each group. Doesn't "
-             "remove anyone from the list, just reorders it.")
-
-    current = {'spike_days': spike_days, 'min_spike_hours': min_spike_hours,
-               'elevation_ratio': elevation_ratio, 'cooldown_days': cooldown_days,
-               'top_n': top_n, 'rank_by_concert_night': rank_by_concert_night}
-    if current != saved:
-        settings = proc.load_settings()
-        settings['concert_warmup'] = current
-        proc.save_settings(settings)
-
-    warmups = warmup_loader(spike_days=spike_days, cooldown_days=cooldown_days,
-                            min_spike_hours=min_spike_hours,
-                            elevation_ratio=elevation_ratio)
-    if warmups.empty:
-        st.info("Not enough data to find this pattern yet — try loosening "
-                "the knobs above.")
-        return
-    if rank_by_concert_night:
-        warmups = warmups.sort_values(['has_concert_night', 'warmup_score'],
-                                      ascending=[False, False]).reset_index(drop=True)
-
-    false_positives = set(proc.load_warmup_false_positives())
-    legit = warmups[~warmups['artist_name'].isin(false_positives)]
-    flagged = warmups[warmups['artist_name'].isin(false_positives)]
-
-    shown = legit.head(top_n)
-    if shown.empty:
-        st.info("Not enough data to find this pattern yet — try loosening "
-                "the knobs above, or you've flagged everything below.")
-    else:
-        table = _warmup_table(shown, spike_days, cooldown_days)
-        table['Never seen live'] = False
-        edited = st.data_editor(
-            table, width='stretch', hide_index=True, key="warmup_editor",
-            height=38 * len(table) + 38,
-            disabled=[c for c in table.columns if c != 'Never seen live'],
-            column_config={'Never seen live': st.column_config.CheckboxColumn(
-                'Never seen live', help="Check if you've never actually seen "
-                "this band since you started using Spotify — moves it down "
-                "to False concert positives instead of ranking it as a "
-                "warm-up.")})
-        newly_flagged = edited.loc[edited['Never seen live'], 'Band']
-        if len(newly_flagged):
-            proc.save_warmup_false_positives(false_positives | set(newly_flagged))
-            st.rerun()
-
+    warmups, matches = render_concert_settings(warmup_loader, df)
     st.divider()
-    st.markdown("**🙅 False concert positives**")
-    st.caption("Bands you've marked as never actually seen live — parked "
-               "here instead of ranked as a warm-up. Check **Restore** to "
-               "move one back.")
-    if flagged.empty:
-        st.caption("None yet.")
+    render_concert_search()
+    st.divider()
+    render_concert_review(warmups, matches)
+    st.divider()
+    render_false_positives()
+
+
+def _iso(d):
+    return d.isoformat() if hasattr(d, 'isoformat') else str(d)
+
+
+def render_concert_search():
+    """One-off lookup for a specific artist/city pair outside the bulk
+    top-N-artist pool above — for a show you know you saw somewhere your
+    home/other-cities settings don't cover (a one-off trip, a smaller
+    venue, an artist that never cracked your listening ranking at all).
+    Goes through the same persistent cache as the bulk fetch
+    (setlistfm.load/save_cache), so a search here also feeds any future
+    bulk matching for that artist/city pair. Confirms directly — no
+    nearby-listening correlation gate, since you're telling us you saw it,
+    not asking the app to guess."""
+    st.markdown("**🔎 Search a specific show**")
+    st.caption("Look up one artist in one city directly — independent of "
+               "'Artists queried' and the cities configured above (e.g. a "
+               "band you saw once on a trip, in a city you don't want to "
+               "add to your regular rotation).")
+    c1, c2, c3 = st.columns([2, 2, 1])
+    artist = c1.text_input("Artist", key="search_artist", placeholder="Crowded House")
+    city = c2.text_input("City", key="search_city", placeholder="Vail")
+    c3.markdown("<div style='height: 1.85rem'></div>", unsafe_allow_html=True)
+    search = c3.button("Search", key="search_button", disabled=not (artist and city))
+
+    if not search:
         return
-    fp_table = _warmup_table(flagged, spike_days, cooldown_days)
-    fp_table['Restore'] = False
-    fp_edited = st.data_editor(
-        fp_table, width='stretch', hide_index=True, key="warmup_fp_editor",
-        height=38 * len(fp_table) + 38,
-        disabled=[c for c in fp_table.columns if c != 'Restore'],
-        column_config={'Restore': st.column_config.CheckboxColumn('Restore')})
-    to_restore = fp_edited.loc[fp_edited['Restore'], 'Band']
-    if len(to_restore):
-        proc.save_warmup_false_positives(false_positives - set(to_restore))
+    if config.DEMO_MODE:
+        st.caption("Demo mode — setlist.fm lookups are disabled.")
+        return
+    if not config.SETLISTFM_API_KEY:
+        st.info("Set `SETLISTFM_API_KEY` in `.local.env` to enable this.")
+        return
+
+    with st.spinner(f"Checking setlist.fm for {artist} in {city}…"):
+        try:
+            shows = setlistfm.artist_shows(artist, city)
+        except (ConnectionError, RuntimeError) as e:
+            st.error(f"setlist.fm lookup failed: {e}")
+            return
+        cache = setlistfm.load_cache()
+        cache.setdefault(city, {})[artist] = [
+            {**s, 'event_date': _iso(s['event_date'])} for s in shows]
+        setlistfm.save_cache(cache)
+
+    if not shows:
+        st.caption(f"No setlist.fm shows found for '{artist}' in '{city}'.")
+        return
+
+    confirmed = proc.load_confirmed_concerts()
+    confirmed_keys = {(c['artist_name'], c['event_date']) for c in confirmed}
+    table = pd.DataFrame(shows)
+    table = table[[(a, _iso(d)) not in confirmed_keys
+                  for a, d in zip(table['artist_name'], table['event_date'])]]
+    if table.empty:
+        st.caption("All matching shows are already confirmed.")
+        return
+
+    table = table.assign(event_date=table['event_date'].apply(_iso)).rename(columns={
+        'artist_name': 'Band', 'event_date': 'Date',
+        'venue_name': 'Venue', 'city_name': 'City'})
+    table['Confirm'] = False
+    edited = st.data_editor(
+        table, width='stretch', hide_index=True, key="search_result_editor",
+        height=38 * len(table) + 38,
+        disabled=[c for c in table.columns if c != 'Confirm'],
+        column_config={'Confirm': st.column_config.CheckboxColumn(
+            'Confirm', help="Move this into your confirmed concert list.")})
+    newly_confirmed = edited.loc[edited['Confirm']]
+    if len(newly_confirmed):
+        for _, row in newly_confirmed.iterrows():
+            confirmed.append({
+                'artist_name': row['Band'], 'event_date': row['Date'],
+                'venue_name': row['Venue'], 'city_name': row['City'],
+                'source': 'setlistfm',
+            })
+        proc.save_confirmed_concerts(confirmed)
         st.rerun()
 
 
-def _warmup_table(rows, spike_days, cooldown_days):
-    """Shared display formatting for both the live Concert warm-up table and
-    the False concert positives table below it."""
-    table = rows.assign(
-        window=[f"{pd.Timestamp(s).date()} → {pd.Timestamp(e).date()}"
-                for s, e in zip(rows['spike_start'], rows['spike_end'])],
-        spike_hours=rows['spike_hours'].round(1),
-        cooldown_hours=rows['cooldown_hours'].round(1),
-        drop_pct=(rows['drop_pct'] * 100).round(0).astype(int),
-        late_night=rows['late_night_minutes'].round(0).astype(int),
-        afternoon=rows['afternoon_minutes'].round(0).astype(int),
-    )
-    return table[['artist_name', 'spike_hours', 'window', 'cooldown_hours',
-                 'drop_pct', 'late_night', 'afternoon']].rename(columns={
-        'artist_name': 'Band', 'spike_hours': f'Spike hours ({spike_days}d)',
-        'window': 'Spike window',
-        'cooldown_hours': f'Hours after (next {cooldown_days}d)',
-        'drop_pct': 'Drop %',
-        'late_night': '🌙 Late night (min)',
-        'afternoon': '☀️ Afternoon (min)',
-    }).reset_index(drop=True)
+def render_concert_settings(warmup_loader, df):
+    """Every tuning dial for both concert-detection signals, collapsed
+    into one expander so the page opens straight to the review queue —
+    the computation still runs regardless of whether the expander is
+    open, since Streamlit doesn't skip widgets inside a collapsed one.
+    Returns (warmups, matches): the listening-pattern heuristic table and
+    the setlist.fm ranked-shows table, for render_concert_review() to
+    merge."""
+    with st.expander("⚙️ Tuning & data sources", expanded=False):
+        st.markdown("**🎫 Listening-pattern warm-up**")
+        st.caption("Bands with a 'charge up, then crash' shape: a burst of "
+                   "listening, then a sharp drop right after — often the "
+                   "sound of hyping up for a show and coming down from it.")
+        saved_w = proc.load_settings()['concert_warmup']
+        c1, c2 = st.columns(2)
+        spike_days = c1.slider("Build-up window (days)", 3, 30, saved_w['spike_days'],
+                               key="warmup_spike_days",
+                               help="How many days of build-up counts as one "
+                                    "'show cycle' — the window the spike is "
+                                    "measured over.")
+        min_spike_hours = c2.slider("Minimum hours of listening in that window",
+                                    0.0, 20.0, saved_w['min_spike_hours'], step=0.5,
+                                    key="warmup_min_hours",
+                                    help="Ignore spikes below this many hours "
+                                         "total — filters out one-off blips.")
+        c3, c4 = st.columns(2)
+        elevation_ratio = c3.slider("Elevated rotation (× your normal rate)",
+                                    1.0, 10.0, saved_w['elevation_ratio'], step=0.5,
+                                    key="warmup_elevation",
+                                    help="How far above that artist's normal "
+                                         "daily rate the spike must be to count "
+                                         "as genuinely 'elevated'.")
+        cooldown_days = c4.slider("Drop-off window after the spike (days)",
+                                  1, 14, saved_w['cooldown_days'],
+                                  key="warmup_cooldown_days",
+                                  help="How soon after the spike to check for "
+                                       "the crash.")
+        current_w = {'spike_days': spike_days, 'min_spike_hours': min_spike_hours,
+                    'elevation_ratio': elevation_ratio, 'cooldown_days': cooldown_days}
+        if current_w != {k: saved_w[k] for k in current_w}:
+            settings = proc.load_settings()
+            settings['concert_warmup'] = {**saved_w, **current_w}
+            proc.save_settings(settings)
+        warmups = warmup_loader(spike_days=spike_days, cooldown_days=cooldown_days,
+                                min_spike_hours=min_spike_hours,
+                                elevation_ratio=elevation_ratio)
+
+        st.divider()
+        st.markdown("**🎟️ setlist.fm real shows**")
+        st.caption("Real past shows for your top artists, cross-referenced "
+                   "against nearby listening.")
+        if config.DEMO_MODE:
+            st.caption("Demo mode — setlist.fm lookups are disabled.")
+            return warmups, proc.concert_match_candidates(df, [], 3)
+
+        saved = proc.load_settings()['concert_lookup']
+        # Back-compat: settings saved before the home/other-city split have
+        # either a singular 'city' string or a flat 'cities' list.
+        if 'home_city' in saved:
+            saved_home_city = saved['home_city']
+            saved_other_cities = saved.get('other_cities', [])
+        else:
+            legacy = saved.get('cities') or ([saved['city']] if 'city' in saved else ['Denver'])
+            saved_home_city = legacy[0] if legacy else 'Denver'
+            saved_other_cities = legacy[1:]
+
+        c5, c6 = st.columns(2)
+        home_city = c5.text_input(
+            "Home city", value=saved_home_city, key="lookup_home_city",
+            help="Checked automatically for your top artists (cached once "
+                 "a day).")
+        other_cities_input = c6.text_input(
+            "Other cities (comma-separated)", value=', '.join(saved_other_cities),
+            key="lookup_other_cities",
+            help="NOT checked automatically — click 'Check other cities "
+                 "now' below when you want to look these up, e.g. after a "
+                 "trip. Keep this short; each artist is queried in every "
+                 "city listed.")
+        other_cities = [c.strip() for c in other_cities_input.split(',') if c.strip()]
+
+        c7, c8 = st.columns(2)
+        correlation_days = c7.slider(
+            "Nearby-listening window (± days)", 1, 14, saved['correlation_days'],
+            key="lookup_corr_days",
+            help="How many days around the real show date counts as "
+                 "'nearby' listening.")
+        top_n_artists = c8.slider(
+            "Artists queried (by minutes listened)", 25, 500, saved['top_n_artists'],
+            step=25, key="lookup_top_n",
+            help="Caps how many library artists get looked up on "
+                 "setlist.fm, by all-time listening minutes (not raw play "
+                 "count, so a skip-heavy artist doesn't crowd out ones you "
+                 "actually spent time with) — plus the same number again "
+                 "from the recent-window ranking below. Keeps the daily "
+                 "request count well under the free-tier limit.")
+        recent_days = st.slider(
+            "Recent window (days)", 30, 180, saved.get('recent_days', 90),
+            step=15, key="lookup_recent_days",
+            help="Artists queried also includes the top artists by "
+                 "listening *within this many days* of your most recent "
+                 "play — separate from the all-time ranking above, so a "
+                 "newer favorite you've been bingeing lately still gets "
+                 "checked even if their lifetime total is nowhere near "
+                 "your all-time top artists.")
+
+        current = {'home_city': home_city, 'other_cities': other_cities,
+                   'correlation_days': correlation_days, 'top_n_artists': top_n_artists,
+                   'recent_days': recent_days,
+                   'display_top_n': saved.get('display_top_n', 30)}
+        if current != {'home_city': saved_home_city, 'other_cities': saved_other_cities,
+                       'correlation_days': saved['correlation_days'],
+                       'top_n_artists': saved['top_n_artists'],
+                       'recent_days': saved.get('recent_days', 90),
+                       'display_top_n': saved.get('display_top_n', 30)}:
+            settings = proc.load_settings()
+            settings['concert_lookup'] = current
+            proc.save_settings(settings)
+
+        if not config.SETLISTFM_API_KEY:
+            st.info("Set `SETLISTFM_API_KEY` in `.local.env` to enable "
+                    "this — see README for how to request a free key.")
+            return warmups, proc.concert_match_candidates(df, [], correlation_days)
+        if not home_city:
+            st.info("Add a home city above.")
+            return warmups, proc.concert_match_candidates(df, [], correlation_days)
+
+        # Union, not just all-time top-N: an all-time favorite might tour
+        # again without a recent spike, and a recent obsession (like the
+        # artist that prompted this — elevated listening this month, but
+        # nowhere near the all-time top by lifetime minutes) wouldn't
+        # otherwise get queried at all. dict.fromkeys dedupes while
+        # keeping the all-time-first order.
+        all_time = proc.list_artists(df, metric='minutes')[:top_n_artists]
+        recent = proc.list_artists_recent(df, days=recent_days, metric='minutes')[:top_n_artists]
+        artist_names = list(dict.fromkeys(all_time + recent))
+        all_cities = [home_city] + other_cities
+
+        # Nothing here fetches automatically — every setlist.fm request
+        # happens from an explicit click below, against a persistent disk
+        # cache (setlistfm.load/save_cache), not st.session_state or a
+        # TTL'd st.cache_data. That means a page reload or app restart
+        # never loses what's already been fetched, and "incremental" means
+        # exactly that: an already-cached (artist, city) pair is a free
+        # cache read, not a re-fetch, so clicking this often costs nothing
+        # once the pool is mostly warm.
+        cache = setlistfm.load_cache()
+        cached_pairs = sum(1 for c in all_cities for a in artist_names
+                           if a in cache.get(c, {}))
+        total_pairs = len(artist_names) * len(all_cities)
+        st.caption(f"{cached_pairs:,}/{total_pairs:,} artist/city "
+                   f"combinations cached for the current settings above.")
+
+        c_fetch, c_force = st.columns(2)
+        do_fetch = c_fetch.button(
+            "📥 Fetch new setlist.fm data", key="lookup_fetch",
+            help="Incremental — only fetches artist/city combinations not "
+                 "already cached. Safe to click any time; a fully-cached "
+                 "pool costs nothing.")
+        do_force = c_force.button(
+            "🔄 Force re-check everything", key="lookup_force",
+            help="Re-fetches every combination below, even ones already "
+                 "cached — use this if a new show might have been logged "
+                 "on setlist.fm since your last check.")
+
+        if do_fetch or do_force:
+            progress = st.progress(0.0, text="Checking setlist.fm…")
+
+            def _cb(done, total, artist, city, hit_network):
+                verb = "Fetched" if hit_network else "Cached"
+                progress.progress(done / total, text=f"{verb} — {artist} "
+                                  f"in {city} ({done}/{total})")
+
+            try:
+                cache, fetched = setlistfm.fetch_shows(
+                    artist_names, all_cities, cache=cache, force=do_force,
+                    progress_cb=_cb)
+            except (ConnectionError, RuntimeError) as e:
+                progress.empty()
+                st.error(f"setlist.fm lookup failed: {e}")
+                shows = setlistfm.shows_for(cache, artist_names, all_cities)
+                return warmups, proc.concert_match_candidates(df, shows, correlation_days)
+            progress.empty()
+            st.success(f"Checked {total_pairs:,} combinations, "
+                      f"{fetched:,} fetched from setlist.fm.")
+
+        shows = setlistfm.shows_for(cache, artist_names, all_cities)
+        if not shows:
+            st.caption("No setlist.fm data cached yet for these settings — "
+                      "click 'Fetch new setlist.fm data' above.")
+        matches = proc.concert_match_candidates(df, shows, correlation_days)
+
+    return warmups, matches
+
+
+def render_concert_review(warmups, matches):
+    """The actual review queue: proc.concert_nominations() merges both
+    signals into one list, one row per real-world event where possible,
+    ranked by confidence tier then supporting-signal strength. Each row
+    gets two independent actions — Confirm (I've seen this) and False
+    positive (never actually seen this artist live, dismissing them from
+    both signals) — with the confirmed/dismissed lists (each with its own
+    undo) rendered separately below by the caller."""
+    st.subheader("🎫🎟️ Concert nominations")
+    st.caption("Every candidate from both signals, merged into one list — "
+               "strongest support first, no supporting listening last. "
+               "Confirm the ones you've actually seen, or flag an artist "
+               "as never seen live to stop it coming back.")
+
+    false_positives = set(proc.load_warmup_false_positives())
+    confirmed = proc.load_confirmed_concerts()
+    confirmed_keys = {(c['artist_name'], c['event_date']) for c in confirmed}
+
+    nominations = proc.concert_nominations(warmups, matches, false_positives)
+    if not nominations.empty:
+        keep = [(a, _iso(d)) not in confirmed_keys
+               for a, d in zip(nominations['artist_name'], nominations['event_date'])]
+        nominations = nominations[keep]
+
+    if nominations.empty:
+        st.info("No nominations right now — as a new user this list starts "
+                "empty until the dials above find something, or try adding "
+                "cities / widening 'Artists queried'.")
+        return
+
+    saved_top_n = proc.load_settings()['concert_lookup'].get('display_top_n', 30)
+    display_top_n = st.slider("Show top N", 10, 200, saved_top_n, step=10,
+                              key="nom_display_top_n")
+    if display_top_n != saved_top_n:
+        settings = proc.load_settings()
+        settings['concert_lookup']['display_top_n'] = display_top_n
+        proc.save_settings(settings)
+
+    shown = nominations.head(display_top_n)
+    table = _nomination_table(shown)
+    table['Confirm'] = False
+    table['False positive'] = False
+    edited = st.data_editor(
+        table, width='stretch', hide_index=True, key="nomination_editor",
+        height=38 * len(table) + 38,
+        disabled=[c for c in table.columns if c not in ('Confirm', 'False positive')],
+        column_config={
+            'Confirm': st.column_config.CheckboxColumn(
+                'Confirm', help="I've seen this — move it into your "
+                "confirmed concert list."),
+            'False positive': st.column_config.CheckboxColumn(
+                'False positive', help="Never actually seen this artist "
+                "live — dismisses them from nominations entirely (both "
+                "signals), not just this one row."),
+            'Elevation': st.column_config.TextColumn(
+                'Elevation', help="setlist.fm signal: nearby daily "
+                "listening rate vs. this artist's own normal rate. "
+                "'—' means no listening in the nearby window at all."),
+            'Warmup score': st.column_config.TextColumn(
+                'Warmup score', help="Listening-pattern signal: spike "
+                "hours × how steep the post-spike drop was. '—' means no "
+                "detected spike for this row."),
+        })
+    newly_confirmed = edited.loc[edited['Confirm']]
+    newly_flagged = edited.loc[edited['False positive'], 'Band'].unique().tolist()
+    if len(newly_confirmed):
+        for _, row in newly_confirmed.iterrows():
+            has_venue = row['Venue'] != '—'
+            confirmed.append({
+                'artist_name': row['Band'], 'event_date': _iso(row['Date']),
+                'venue_name': row['Venue'] if has_venue else None,
+                'city_name': row['City'] if row['City'] != '—' else None,
+                'source': 'setlistfm' if has_venue else 'warmup',
+            })
+        proc.save_confirmed_concerts(confirmed)
+        st.rerun()
+    if newly_flagged:
+        proc.save_warmup_false_positives(false_positives | set(newly_flagged))
+        st.rerun()
+
+
+_NOMINATION_SIGNAL_LABELS = {
+    'both': '🎫🎟️ Both', 'warmup': '🎫 Listening pattern', 'setlistfm': '🎟️ setlist.fm',
+}
+
+
+def _nomination_table(rows):
+    """Display formatting for the merged nomination queue."""
+    return rows.assign(
+        event_date=rows['event_date'].apply(_iso),
+        venue_name=rows['venue_name'].fillna('—'),
+        city_name=rows['city_name'].fillna('—'),
+        signal=rows['signal'].map(_NOMINATION_SIGNAL_LABELS),
+        elevation=[f"{e:.1f}×" if pd.notna(e) and e > 0 else "—" for e in rows['elevation']],
+        warmup_score=[f"{s:.1f}" if pd.notna(s) else "—" for s in rows['warmup_score']],
+    ).rename(columns={
+        'artist_name': 'Band', 'event_date': 'Date', 'venue_name': 'Venue',
+        'city_name': 'City', 'signal': 'Signal', 'elevation': 'Elevation',
+        'warmup_score': 'Warmup score',
+    })[['Band', 'Date', 'Venue', 'City', 'Signal', 'Elevation', 'Warmup score']]
+
+
+def render_false_positives():
+    """Artists dismissed as 'never actually seen live' — shared by both
+    concert-detection signals (proc.load/save_warmup_false_positives), so
+    a dismissal from the nomination queue keeps that artist out of both.
+    Restore undoes a mistaken dismissal."""
+    st.markdown("**🙅 Never seen live**")
+    false_positives = sorted(proc.load_warmup_false_positives())
+    if not false_positives:
+        st.caption("None yet.")
+        return
+    fp_table = pd.DataFrame({'Band': false_positives, 'Restore': False})
+    fp_edited = st.data_editor(
+        fp_table, width='stretch', hide_index=True, key="warmup_fp_editor",
+        height=38 * len(fp_table) + 38,
+        disabled=['Band'],
+        column_config={'Restore': st.column_config.CheckboxColumn('Restore')})
+    to_restore = fp_edited.loc[fp_edited['Restore'], 'Band']
+    if len(to_restore):
+        proc.save_warmup_false_positives(set(false_positives) - set(to_restore))
+        st.rerun()
+
+
+_CONFIRM_SOURCE_LABELS = {
+    'setlistfm': '🎟️ setlist.fm',
+    'warmup': '🎫 Listening pattern',
+}
+
+
+def render_confirmed_concerts():
+    """The curated payoff of this whole page: every row Confirmed in the
+    merged nomination queue below lands in this same
+    data/confirmed_concerts.json, tagged with which signal backed it
+    (missing/legacy entries predate that tag and are treated as
+    setlist.fm-sourced, the only path that existed before it). Remove
+    undoes a mistaken confirmation. Leads the page — this list is the
+    reason the tuning/review machinery below it exists."""
+    st.subheader("✅ Confirmed concerts")
+    confirmed = proc.load_confirmed_concerts()
+    if not confirmed:
+        st.caption("None yet — confirm a row in the nomination queue below "
+                   "to start building this list.")
+        return
+
+    conf_table = pd.DataFrame(confirmed)
+    if 'source' not in conf_table.columns:
+        conf_table['source'] = 'setlistfm'
+    else:
+        conf_table['source'] = conf_table['source'].fillna('setlistfm')
+    conf_table['Source'] = conf_table['source'].map(_CONFIRM_SOURCE_LABELS)
+    conf_table = conf_table.rename(columns={
+        'artist_name': 'Band', 'event_date': 'Show date',
+        'venue_name': 'Venue', 'city_name': 'City',
+    })[['Band', 'Show date', 'Venue', 'City', 'Source']].fillna('—')
+    conf_table['Remove'] = False
+    conf_edited = st.data_editor(
+        conf_table, width='stretch', hide_index=True, key="confirmed_concert_editor",
+        height=38 * len(conf_table) + 38,
+        disabled=[c for c in conf_table.columns if c != 'Remove'],
+        column_config={'Remove': st.column_config.CheckboxColumn('Remove')})
+    to_remove = conf_edited.loc[conf_edited['Remove']]
+    if len(to_remove):
+        remove_keys = {(r['Band'], r['Show date']) for _, r in to_remove.iterrows()}
+        proc.save_confirmed_concerts([
+            c for c in confirmed
+            if (c['artist_name'], c['event_date']) not in remove_keys])
+        st.rerun()
 
 
 def render_bands(df):

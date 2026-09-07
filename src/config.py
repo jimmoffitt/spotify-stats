@@ -49,11 +49,24 @@ GROUPS_FILE = os.path.join(DATA_DIR, 'groups.json')
 # Artists dismissed from the Concert warm-up table as "never actually seen
 # live" — a flat list of artist names. See render_concert_warmups.
 WARMUP_FALSE_POSITIVES_FILE = os.path.join(DATA_DIR, 'warmup_false_positives.json')
+# Concert candidates (real setlist.fm show + nearby listening) promoted via
+# checkbox into the confirmed list — a flat list of {artist_name,
+# event_date, venue_name, city_name} dicts. See render_concert_matches.
+CONFIRMED_CONCERTS_FILE = os.path.join(DATA_DIR, 'confirmed_concerts.json')
+# Persistent setlist.fm show cache -- {city: {artist_name: [shows]}}. An
+# API cache like the enriched/*.json below, not personal curation state,
+# so it lives alongside them (covered by the same data/enriched/
+# gitignore). Fetched incrementally on request only — see src/setlistfm.py.
+SETLISTFM_SHOWS_CACHE_FILE = os.path.join(ENRICHED_DIR, 'setlistfm_shows.json')
 
 # 3. Secrets / OAuth
 CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
 CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI', 'http://localhost:8888/callback')
+
+# setlist.fm (Concerts page — see src/setlistfm.py). Flat x-api-key header,
+# no OAuth/callback flow. Free-tier key: https://www.setlist.fm/settings/api
+SETLISTFM_API_KEY = os.getenv('SETLISTFM_API_KEY')
 
 # Scopes needed for incremental sync (recently-played) and top-read analytics
 SCOPES = 'user-read-recently-played user-top-read'
@@ -65,6 +78,16 @@ API_BASE = 'https://api.spotify.com/v1'
 RECENTLY_PLAYED_URL = f'{API_BASE}/me/player/recently-played'
 TRACKS_URL = f'{API_BASE}/tracks'    # batch up to 50
 ARTISTS_URL = f'{API_BASE}/artists'  # batch up to 50
+
+# setlist.fm — real past-show lookups, cross-referenced against listening
+# history to catch concerts the artist_concert_warmups() heuristic misses
+# (an artist you saw live but never binged around the show). See
+# src/setlistfm.py.
+SETLISTFM_API_BASE = 'https://api.setlist.fm/rest/1.0'
+SETLISTFM_SEARCH_URL = f'{SETLISTFM_API_BASE}/search/setlists'
+# Free-tier rate limit is 2 req/sec — library_shows() sleeps this long
+# between per-artist requests.
+SETLISTFM_REQUEST_INTERVAL = 0.55
 
 # Max IDs per batch request for the /tracks and /artists endpoints
 API_BATCH_SIZE = 50
@@ -107,6 +130,7 @@ if DEMO_MODE:
     GROUPS_FILE = os.path.join(DEMO_DIR, 'groups.json')
     LAST_SYNC_FILE = os.path.join(DEMO_DIR, 'last_sync.json')
     WARMUP_FALSE_POSITIVES_FILE = os.path.join(DEMO_DIR, 'warmup_false_positives.json')
+    CONFIRMED_CONCERTS_FILE = os.path.join(DEMO_DIR, 'confirmed_concerts.json')
     os.makedirs(DEMO_DIR, exist_ok=True)
 
 # 7. Defaults used when settings.json doesn't exist yet
@@ -126,6 +150,14 @@ DEFAULT_SETTINGS = {
         'cooldown_days': 2,
         'top_n': 10,
         'rank_by_concert_night': True,
+    },
+    'concert_lookup': {                 # Binges page's Concert matches (setlist.fm)
+        'home_city': 'Denver',           # queried automatically, once a day
+        'other_cities': [],              # manual/ad hoc only — see lookup_check_other
+        'correlation_days': 3,           # +/- window checked for nearby listening
+        'top_n_artists': 150,            # library artists queried, by all-time minutes
+        'recent_days': 90,               # + top_n_artists more queried by recent-window minutes
+        'display_top_n': 30,             # ranked rows shown in the candidate table
     },
 }
 
